@@ -3,6 +3,26 @@ import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
+// Textarea e Label sono definiti fuori da Onboarding: se fossero interni al
+// render, verrebbero ricreati ad ogni keystroke e React rimonterebbe
+// l'elemento <textarea>, causando la perdita di focus dopo ogni carattere.
+const Label = ({ text, sub }: any) => (
+  <div style={{ marginBottom: 16, marginTop: 24 }}>
+    <div style={{ fontWeight: 600, fontSize: 15 }}>{text}</div>
+    {sub && <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{sub}</div>}
+  </div>
+)
+
+const Textarea = ({ value, onChange, placeholder }: any) => (
+  <textarea
+    value={value}
+    onChange={onChange}
+    placeholder={placeholder}
+    rows={3}
+    style={{ width: '100%', background: '#0f1229', border: '1px solid #1e2340', borderRadius: 8, color: 'white', padding: '12px', fontSize: 14, outline: 'none', resize: 'vertical', boxSizing: 'border-box', marginTop: 8 }}
+  />
+)
+
 export default function Onboarding() {
   const router = useRouter()
   const [section, setSection] = useState(1)
@@ -47,22 +67,7 @@ export default function Onboarding() {
     <button onClick={() => setPill(field, value, multi)} style={pillStyle(field, value, multi)}>{value}</button>
   )
 
-  const Textarea = ({ field, placeholder }: any) => (
-    <textarea
-      value={form[field]}
-      onChange={e => setForm((f: any) => ({ ...f, [field]: e.target.value }))}
-      placeholder={placeholder}
-      rows={3}
-      style={{ width: '100%', background: '#0f1229', border: '1px solid #1e2340', borderRadius: 8, color: 'white', padding: '12px', fontSize: 14, outline: 'none', resize: 'vertical', boxSizing: 'border-box', marginTop: 8 }}
-    />
-  )
-
-  const Label = ({ text, sub }: any) => (
-    <div style={{ marginBottom: 16, marginTop: 24 }}>
-      <div style={{ fontWeight: 600, fontSize: 15 }}>{text}</div>
-      {sub && <div style={{ fontSize: 13, color: '#6b7280', marginTop: 4 }}>{sub}</div>}
-    </div>
-  )
+  const setField = (field: string, value: string) => setForm((f: any) => ({ ...f, [field]: value }))
 
   const handleSubmit = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -93,10 +98,10 @@ export default function Onboarding() {
             <span style={{ fontSize: 12, background: '#1e2340', color: '#7F77DD', padding: '2px 10px', borderRadius: 20 }}>Obbligatorio</span>
 
             <Label text="Cosa stai costruendo?" sub="Una o due frasi. Non fare il pitch — spiega e basta." />
-            <Textarea field="what_building" placeholder="Aiutiamo X a fare Y grazie a Z..." />
+            <Textarea value={form.what_building} onChange={(e: any) => setField('what_building', e.target.value)} placeholder="Aiutiamo X a fare Y grazie a Z..." />
 
             <Label text="Chi è il tuo cliente?" sub="Sii specifico. Non 'le piccole imprese' — chi esattamente?" />
-            <Textarea field="customer" placeholder="Founder alle prime armi che..." />
+            <Textarea value={form.customer} onChange={(e: any) => setField('customer', e.target.value)} placeholder="Founder alle prime armi che..." />
 
             <Label text="Dove sei adesso?" sub="Sii onesto. Cambia tutto." />
             <div style={{ marginTop: 8 }}>
@@ -106,7 +111,7 @@ export default function Onboarding() {
             </div>
 
             <Label text="Problema più urgente in questo momento?" sub="Cosa ti impedisce di dormire la notte." />
-            <Textarea field="problem" placeholder="La cosa che mi blocca di più adesso è..." />
+            <Textarea value={form.problem} onChange={(e: any) => setField('problem', e.target.value)} placeholder="La cosa che mi blocca di più adesso è..." />
           </div>
         )}
 
@@ -229,7 +234,7 @@ export default function Onboarding() {
             </div>
 
             <Label text="Errore più grande finora?" sub="Salta se non ne hai ancora fatti." />
-            <Textarea field="biggest_mistake" placeholder="L'errore che mi ha insegnato di più è stato..." />
+            <Textarea value={form.biggest_mistake} onChange={(e: any) => setField('biggest_mistake', e.target.value)} placeholder="L'errore che mi ha insegnato di più è stato..." />
           </div>
         )}
 
