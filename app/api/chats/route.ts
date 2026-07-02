@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://nkzgisgrbipbnaogeryw.supabase.co'
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Route server-side: usa la service role key (bypassa RLS) perché qui non
+// giunge il JWT dell'utente — con la anon key ogni insert/select su `chats`
+// veniva rifiutato dalla row-level security (42501). La route stessa scopa
+// già le query per userId/chatId passato dal client autenticato.
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const sbHeaders = {
     'Content-Type': 'application/json',

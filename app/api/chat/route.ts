@@ -7,7 +7,8 @@ const client = new Anthropic({
 })
 
 const SUPABASE_URL = 'https://nkzgisgrbipbnaogeryw.supabase.co'
-const SUPABASE_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// Route server-side: service role key, stesso motivo di app/api/chats/route.ts.
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const sbHeaders = {
     'Content-Type': 'application/json',
