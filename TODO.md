@@ -46,7 +46,10 @@
   4. Assicurarsi che `currentChatId` venga passato correttamente alla funzione di invio messaggio
   5. Testare il flusso: caricare app → sidebar mostra chat → selezionare chat → inviare messaggio
 - [x] **Dopo il fix:** fare commit con messaggio `fix: currentChatId null on sidebar load`
-- [x] **Ri-verificato in sessione successiva:** codice attuale di `app/mentor/page.tsx` e `app/api/chats/route.ts` confermato corretto (fallback try/catch + creazione automatica chat se lista vuota). Nessuna modifica ulteriore necessaria.
+- [x] **Ri-verificato in sessione successiva:** codice di `app/mentor/page.tsx`/`app/api/chats/route.ts` (fallback + creazione chat) era corretto MA il bug persisteva ancora in produzione — causa reale trovata solo osservando la rete nel browser: `POST /api/chats` rispondeva 401 (`42501: new row violates row-level security policy for table "chats"`). Le route server-side (`app/api/chats/route.ts`, `app/api/history/route.ts`, `app/api/chat/route.ts`) usavano la anon/publishable key invece della service role key, quindi la RLS su `auth.uid()` rifiutava ogni insert/select. Passate a `SUPABASE_SERVICE_ROLE_KEY` (stesso pattern già usato in `lib/sloan-retrieval.ts`).
+- [x] **Commit:** `f92696c` — `fix: use service role key in server-side Supabase routes to fix RLS 401`
+- [x] **Push:** su `origin/main`
+- [x] **Verifica end-to-end su `founder-ai-iota.vercel.app/mentor`:** bottone "Invia" attivo, messaggio inviato, Sloan ha risposto correttamente ("Funziona. Dimmi: su cosa stai lavorando?"). Confermato visivamente nel browser, non solo a livello di codice.
 
 ---
 
