@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
 interface Chat {
@@ -61,14 +62,16 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-[#0a0c1a] text-white">
       <nav className="border-b border-[#1e2340] px-8 py-4 flex justify-between items-center">
-        <Image
-          src="/Founder_AI_logo_transparent.png"
-          alt="FounderAI"
-          height={36}
-          width={120}
-          className="object-contain"
-          priority
-        />
+        <Link href="/" className="flex-shrink-0">
+          <Image
+            src="/Fouderailogobianco_transparent.png"
+            alt="FounderAI"
+            height={32}
+            width={120}
+            className="object-contain h-6 w-auto sm:h-8"
+            priority
+          />
+        </Link>
         <div className="flex items-center gap-4">
           <span className="text-gray-400 text-sm">{user.email}</span>
           <button

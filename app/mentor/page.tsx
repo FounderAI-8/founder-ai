@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import Image from 'next/image'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
 interface Message {
@@ -276,6 +277,16 @@ export default function MentorPage() {
             {/* ── Main area ── */}
             <div className="flex-1 flex flex-col min-w-0">
                 <nav className="border-b border-[#1e2340] px-6 py-4 flex items-center gap-4">
+                    <Link href="/" className="flex-shrink-0">
+                        <Image
+                            src="/Fouderailogobianco_transparent.png"
+                            alt="FounderAI"
+                            height={32}
+                            width={120}
+                            className="object-contain h-6 w-auto sm:h-8"
+                            priority
+                        />
+                    </Link>
                     {!sidebarOpen && (
                         <button
                             onClick={() => setSidebarOpen(true)}
@@ -285,16 +296,7 @@ export default function MentorPage() {
                             ☰
                         </button>
                     )}
-                    <a href="/dashboard" className="text-gray-400 hover:text-white text-sm">← Dashboard</a>
-                    <Image
-                        src="/Founder_AI_logo_transparent.png"
-                        alt="FounderAI"
-                        height={32}
-                        width={108}
-                        className="object-contain ml-auto"
-                        priority
-                    />
-                    <div className="w-4" />
+                    <a href="/dashboard" className="text-gray-400 hover:text-white text-sm ml-auto">← Dashboard</a>
                 </nav>
 
                 <div className="flex-1 overflow-y-auto px-8 py-6 max-w-3xl mx-auto w-full">
