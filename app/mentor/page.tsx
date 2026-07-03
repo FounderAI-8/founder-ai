@@ -282,7 +282,7 @@ export default function MentorPage() {
                             src="/Fouderailogobianco_transparent.png"
                             alt="FounderAI"
                             height={32}
-                            width={120}
+                            width={105}
                             className="object-contain h-6 w-auto sm:h-8"
                             priority
                         />
