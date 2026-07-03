@@ -53,6 +53,18 @@
 
 ---
 
+### Task 1b — Fix: onboarding non salva il profilo, redirect loop ad ogni login
+- [x] **Sintomo:** l'utente compila l'onboarding, clicca "Inizia con il tuo mentor", ma al login successivo viene rimandato di nuovo a `/onboarding` invece che a `/mentor` o `/dashboard` — come se il profilo non fosse mai stato salvato.
+- [x] **Causa reale (trovata testando dal vivo, non solo leggendo il codice):** due problemi distinti nella tabella `founder_profiles`:
+  1. Mismatch di nomi colonna: il form usava nomi verbosi (`what_building`, `business_model`, `team_size`, `audience_size`, `investor_access`, `background`, `first_business`, `failed_before`, `end_goal`, `biggest_fear`, `revenue_timeline`) che non esistono nello schema reale (`idea`, `model`, `team`, `audience`, `investors`, `expertise`, `first_time`, `failure`, `goal`, `fear`, `timeline`). L'upsert falliva con `PGRST204`/`42703`, ma l'errore non veniva mai controllato.
+  2. `target_market` è una colonna array Postgres reale, non testo — il codice faceva `.join(', ')` trasformandola in stringa, causando `22P02: malformed array literal` anche dopo aver corretto i nomi colonna.
+- [x] **Fix:** mappatura corretta dei campi in `app/onboarding/page.tsx` (upsert con gestione errori + alert visibile), `app/dashboard/page.tsx` (select/read su `idea` invece di `what_building`), `app/api/chat/route.ts` (`loadFounderProfile` ora legge le colonne reali, così Sloan riceve davvero il profilo del founder). `target_market` passato come array, non più joinato.
+- [x] **Commit:** `333ccef` (nomi colonna) + `2fac7ac` (array target_market)
+- [x] **Push:** su `origin/main`
+- [x] **Verifica end-to-end reale:** compilato l'intero form su `founder-ai-iota.vercel.app/onboarding`, submit riuscito senza errori, riga salvata su Supabase con `target_market` come array, `/dashboard` caricato correttamente senza redirect loop — anche dopo reload pulito della pagina.
+
+---
+
 ### Task 2 — Integrazione logo nella navbar
 - [x] **Asset:** `public/Founder_AI_logo_transparent.png` (verificare che il file sia in `public/`)
 - [x] **Cosa fare:**
@@ -61,7 +73,9 @@
   3. Dimensioni suggerite: altezza 32-40px, larghezza auto, preservare aspect ratio
   4. Verificare che appaia correttamente su mobile e desktop
 - [x] **Dopo il fix:** fare commit con messaggio `feat: add logo to navbar`
-- ⚠️ **NOTA:** `public/Founder_AI_logo_transparent.png` NON esiste nel repo. Il codice è pronto ma il file logo va aggiunto manualmente a `public/` prima del deploy.
+- [x] **Fatto:** logo bianco (`public/Fouderailogobianco_transparent.png`) usato su entrambe le navbar scure (dashboard, mentor) — la versione dark era illeggibile su sfondo #0a0c1a. Logo a sinistra, link a `/`, aspect ratio preservato.
+- [x] **Commit:** `c071e96`, `b0e52b1` (il secondo corregge un ritaglio del PNG: il file originale era un canvas quadrato 2000x2000 che Next.js Image squadrava, tagliando il testo "FounderAI").
+- [x] **Push + verifica live** su `founder-ai-iota.vercel.app/mentor`: logo leggibile, non stirato, link funzionante.
 
 ---
 
