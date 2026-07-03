@@ -14,7 +14,7 @@ interface Chat {
 
 interface Profile {
   stage?: string
-  what_building?: string
+  idea?: string
 }
 
 export default function Dashboard() {
@@ -33,7 +33,7 @@ export default function Dashboard() {
       setUser(u)
 
       const [profileRes, chatsRes] = await Promise.all([
-        supabase.from('founder_profiles').select('stage, what_building').eq('user_id', u.id).single(),
+        supabase.from('founder_profiles').select('stage, idea').eq('user_id', u.id).single(),
         fetch(`/api/chats?userId=${u.id}`)
       ])
 
@@ -89,7 +89,7 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold mb-1">Bentornato, {displayName}.</h1>
           {profile?.stage && (
             <p className="text-gray-400 text-sm">
-              Stai lavorando su: <span className="text-gray-300">{profile.what_building || profile.stage}</span>
+              Stai lavorando su: <span className="text-gray-300">{profile.idea || profile.stage}</span>
             </p>
           )}
         </div>

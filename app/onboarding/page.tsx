@@ -69,11 +69,44 @@ export default function Onboarding() {
 
   const setField = (field: string, value: string) => setForm((f: any) => ({ ...f, [field]: value }))
 
+  // Mappa i campi del form (nomi verbosi, comodi in UI) alle colonne reali
+  // della tabella `founder_profiles` su Supabase, che usano nomi più corti
+  // (es. what_building -> idea, business_model -> model, team_size -> team).
+  // Un mismatch qui faceva fallire silenziosamente l'upsert (nessun controllo
+  // errore) e l'utente si ritrovava a rifare l'onboarding a ogni login.
   const handleSubmit = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
-    const payload = { ...form, target_market: form.target_market.join(', ') }
-    await supabase.from('founder_profiles').upsert({ user_id: user.id, ...payload })
+    const payload = {
+      user_id: user.id,
+      idea: form.what_building,
+      customer: form.customer,
+      stage: form.stage,
+      problem: form.problem,
+      country: form.country,
+      target_market: form.target_market.join(', '),
+      sector: form.sector,
+      model: form.business_model,
+      product_type: form.product_type,
+      budget: form.budget,
+      time_available: form.time_available,
+      team: form.team_size,
+      audience: form.audience_size,
+      investors: form.investor_access,
+      expertise: form.background,
+      first_time: form.first_business,
+      failure: form.failed_before,
+      biggest_mistake: form.biggest_mistake,
+      goal: form.end_goal,
+      fear: form.biggest_fear,
+      timeline: form.revenue_timeline,
+    }
+    const { error } = await supabase.from('founder_profiles').upsert(payload, { onConflict: 'user_id' })
+    if (error) {
+      console.error('Errore salvataggio profilo:', error.message)
+      alert('Non sono riuscito a salvare il profilo. Riprova.')
+      return
+    }
     router.push('/mentor')
   }
 
