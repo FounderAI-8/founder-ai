@@ -84,7 +84,7 @@ export default function Onboarding() {
       stage: form.stage,
       problem: form.problem,
       country: form.country,
-      target_market: form.target_market.join(', '),
+      target_market: form.target_market,
       sector: form.sector,
       model: form.business_model,
       product_type: form.product_type,
