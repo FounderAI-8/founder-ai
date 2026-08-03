@@ -44,7 +44,7 @@ async function embedQuery(text: string): Promise<number[]> {
 /** Recupera i top-k chunk dalla KB per similarità coseno. */
 export async function retrieveSloanChunks(
   query: string,
-  opts?: { matchCount?: number; section?: string | null }
+  opts?: { matchCount?: number; section?: string | null; track?: string | null }
 ): Promise<KbChunk[]> {
   if (!query?.trim()) return [];
   try {
@@ -53,6 +53,7 @@ export async function retrieveSloanChunks(
       query_embedding: embedding,
       match_count: opts?.matchCount ?? 6,
       filter_section: opts?.section ?? null,
+      filter_track: opts?.track ?? null,
     });
     if (error) {
       console.error("[sloan-retrieval] match_sloan_kb error:", error.message);
@@ -75,7 +76,7 @@ export function formatKbContext(chunks: KbChunk[]): string {
 /** Comodità: query → stringa di contesto pronta per il system prompt. */
 export async function retrieveSloanContext(
   query: string,
-  opts?: { matchCount?: number; section?: string | null }
+  opts?: { matchCount?: number; section?: string | null; track?: string | null }
 ): Promise<string> {
   const chunks = await retrieveSloanChunks(query, opts);
   return formatKbContext(chunks);

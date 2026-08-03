@@ -221,18 +221,19 @@ async function saveMessage(chatId: string, role: string, content: string) {
     }
 }
 
-async function loadFounderProfile(userId: string): Promise<string> {
-    if (!userId) return ''
+async function loadFounderProfile(userId: string): Promise<{ text: string; track: string | null }> {
+    if (!userId) return { text: '', track: null }
     try {
         const res = await fetch(
             `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${userId}&select=*`,
             { headers: sbHeaders }
         )
-        if (!res.ok) return ''
+        if (!res.ok) return { text: '', track: null }
         const rows = await res.json()
-        if (!rows.length) return ''
+        if (!rows.length) return { text: '', track: null }
         const p = rows[0]
         const lines: string[] = []
+        if (p.track)              lines.push(`Founder track: ${p.track}`)
         if (p.idea)               lines.push(`Business idea: ${p.idea}`)
         if (p.stage)              lines.push(`Stage: ${p.stage}`)
         if (p.problem)            lines.push(`Urgent problem: ${p.problem}`)
@@ -253,9 +254,12 @@ async function loadFounderProfile(userId: string): Promise<string> {
         if (p.goal)               lines.push(`End goal: ${p.goal}`)
         if (p.fear)               lines.push(`Biggest fear: ${p.fear}`)
         if (p.timeline)           lines.push(`Revenue timeline: ${p.timeline}`)
-        return lines.length ? '\n\nFOUNDER PROFILE:\n' + lines.join('\n') : ''
+        return {
+            text: lines.length ? '\n\nFOUNDER PROFILE:\n' + lines.join('\n') : '',
+            track: p.track ?? null,
+        }
     } catch {
-        return ''
+        return { text: '', track: null }
     }
 }
 
@@ -269,16 +273,20 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Missing message or chatId' }, { status: 400 })
         }
 
-        const [history, founderProfile, kbContext] = await Promise.all([
+        const [history, founderProfile] = await Promise.all([
             loadHistory(chatId),
             loadFounderProfile(userId),
-            retrieveSloanContext(message, { matchCount: 6 }),
         ])
+
+        const kbContext = await retrieveSloanContext(message, {
+            matchCount: 6,
+            track: founderProfile.track,
+        })
 
         const kbBlock = kbContext
             ? `\n\n<knowledge_base>\nMateriale di riferimento autorevole recuperato dalla knowledge base di Sloan\n(Sez. 1–11: mental model, framework, libri, fallimenti, psicologia, stage,\ndomande, metriche, distribuzione, fundraising).\n- Usalo come fonte di verità per framework, metriche, casi e benchmark.\n- NON copiarlo verbatim: integralo nel tuo ragionamento e parla come Sloan.\n- I dati marcati [MERCATO 2025/26] sono una fotografia datata, non una legge.\n\n${kbContext}\n</knowledge_base>`
             : ''
-        const systemPrompt = MENTOR_SYSTEM_PROMPT + founderProfile + kbBlock
+        const systemPrompt = MENTOR_SYSTEM_PROMPT + founderProfile.text + kbBlock
 
         const messages = [
             ...history,

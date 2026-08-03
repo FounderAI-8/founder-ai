@@ -27,6 +27,7 @@ export default function Onboarding() {
   const router = useRouter()
   const [section, setSection] = useState(1)
   const [form, setForm] = useState<any>({
+    track: '',
     what_building: '', customer: '', stage: '', problem: '',
     country: '', target_market: [] as string[], sector: '', business_model: '', product_type: '',
     budget: '', time_available: '', team_size: '', audience_size: '', investor_access: '',
@@ -79,6 +80,7 @@ export default function Onboarding() {
     if (!user) return
     const payload = {
       user_id: user.id,
+      track: form.track || null,
       idea: form.what_building,
       customer: form.customer,
       stage: form.stage,
@@ -129,6 +131,12 @@ export default function Onboarding() {
           <div>
             <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Il tuo progetto</h2>
             <span style={{ fontSize: 12, background: '#1e2340', color: '#7F77DD', padding: '2px 10px', borderRadius: 20 }}>Obbligatorio</span>
+
+            <Label text="Che percorso stai seguendo?" />
+            <div style={{ marginTop: 8 }}>
+              <button onClick={() => setField('track', 'startup')} style={pillStyle('track', 'startup')}>Startup / scale-up</button>
+              <button onClick={() => setField('track', 'smb')} style={pillStyle('track', 'smb')}>PMI / attività tradizionale</button>
+            </div>
 
             <Label text="Cosa stai costruendo?" sub="Una o due frasi. Non fare il pitch — spiega e basta." />
             <Textarea value={form.what_building} onChange={(e: any) => setField('what_building', e.target.value)} placeholder="Aiutiamo X a fare Y grazie a Z..." />
