@@ -27,6 +27,21 @@ const MAX_CHUNK_TOKENS = 550; // sopra questa soglia il blocco viene sub-splitta
 const TARGET_SUB_TOKENS = 450;
 const EMBED_BATCH = 96; // input per chiamata embedding
 
+const SECTION_TRACK_MAP: Record<string, string> = {
+  "01": "universal",
+  "02": "universal",
+  "03": "universal",
+  "04": "universal",
+  "05": "startup",
+  "06": "universal",
+  "07": "startup",
+  "08": "universal",
+  "09": "startup",
+  "10": "startup",
+  "11": "startup",
+  "12": "smb",
+};
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // ---------- Tipi ----------
@@ -38,6 +53,7 @@ type Chunk = {
   block_title: string | null;
   content: string;
   token_count: number;
+  track: string | null;
 };
 
 // ---------- Util ----------
@@ -93,7 +109,7 @@ function parseSection(filename: string, raw: string): Chunk[] {
       (currentCategory ? ` · ${currentCategory}` : "") +
       `]`;
 
-    const meta = { section, section_title: sectionTitle, category: currentCategory, block_id: blockId, block_title: blockTitle };
+    const meta = { section, section_title: sectionTitle, category: currentCategory, block_id: blockId, block_title: blockTitle, track: SECTION_TRACK_MAP[section] ?? null };
 
     for (const piece of splitLongBody(body)) {
       const content = `${label}\n${piece}`;
@@ -187,7 +203,10 @@ async function upsertSection(section: string, chunks: Chunk[]) {
   const del = await supabase.from("sloan_kb_chunks").delete().eq("section", section);
   if (del.error) throw del.error;
   // 3) inserisci
-  const rows = chunks.map((c, i) => ({ ...c, embedding: embeddings[i] }));
+  const rows = chunks.map((c, i) => {
+    const { track, ...rest } = c;
+    return { ...rest, metadata: { track }, embedding: embeddings[i] };
+  });
   for (let i = 0; i < rows.length; i += 100) {
     const ins = await supabase.from("sloan_kb_chunks").insert(rows.slice(i, i + 100));
     if (ins.error) throw ins.error;
@@ -197,8 +216,10 @@ async function upsertSection(section: string, chunks: Chunk[]) {
 // ---------- Main ----------
 async function main() {
   const dir = process.argv[2] ?? "./kb";
+  const onlySection = process.argv[3]; // es. "12" per processare solo quella sezione
   const files = readdirSync(dir)
     .filter((f) => /sloan_kb_section_\d+.*\.md$/i.test(f))
+    .filter((f) => !onlySection || f.includes(`section_${onlySection}`) || f.includes(`section-${onlySection}`))
     .sort();
   if (!files.length) throw new Error(`Nessun file KB trovato in ${dir}`);
 
