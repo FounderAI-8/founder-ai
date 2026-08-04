@@ -28,6 +28,8 @@ export default function MentorPage() {
     const [currentChatId, setCurrentChatId] = useState<string | null>(null)
     const currentChatIdRef = useRef<string | null>(null)
     const [sidebarOpen, setSidebarOpen] = useState(true)
+    const [userEmail, setUserEmail] = useState<string | null>(null)
+    const [menuOpen, setMenuOpen] = useState(false)
 
     const [editingChatId, setEditingChatId] = useState<string | null>(null)
     const [editingTitle, setEditingTitle] = useState('')
@@ -44,6 +46,7 @@ export default function MentorPage() {
             const uid = data.user.id
             setUserId(uid)
             userIdRef.current = uid
+            setUserEmail(data.user.email ?? null)
             initChats(uid)
         })
     }, [])
@@ -296,7 +299,38 @@ export default function MentorPage() {
                             ☰
                         </button>
                     )}
-                    <a href="/dashboard" className="text-gray-400 hover:text-white text-sm ml-auto">← Dashboard</a>
+                    <div className="ml-auto flex items-center gap-4">
+                        <a href="/dashboard" className="text-gray-400 hover:text-white text-sm">← Dashboard</a>
+                        <div style={{ position: 'relative' }}>
+                            <button
+                                onClick={() => setMenuOpen(o => !o)}
+                                className="w-8 h-8 rounded-full bg-[#534AB7] text-white text-xs font-semibold flex items-center justify-center hover:bg-[#6B63C8] transition-colors"
+                                title="Account"
+                            >
+                                {userEmail ? userEmail[0].toUpperCase() : '?'}
+                            </button>
+                            {menuOpen && (
+                                <div
+                                    className="absolute right-0 top-10 bg-[#0f1229] border border-[#1e2340] rounded-xl py-1 z-50"
+                                    style={{ minWidth: 152 }}
+                                >
+                                    <Link
+                                        href="/profile"
+                                        onClick={() => setMenuOpen(false)}
+                                        className="block px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-[#1e2340]"
+                                    >
+                                        Profilo
+                                    </Link>
+                                    <button
+                                        onClick={async () => { await supabase.auth.signOut(); window.location.href = '/auth/login' }}
+                                        className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:text-white hover:bg-[#1e2340]"
+                                    >
+                                        Esci
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                 </nav>
 
                 <div className="flex-1 overflow-y-auto px-8 py-6 max-w-3xl mx-auto w-full">
