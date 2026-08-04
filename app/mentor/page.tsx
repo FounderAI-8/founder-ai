@@ -42,7 +42,7 @@ export default function MentorPage() {
 
     useEffect(() => {
         supabase.auth.getUser().then(({ data }) => {
-            if (!data.user) return
+            if (!data.user) { window.location.href = '/auth/login'; return }
             const uid = data.user.id
             setUserId(uid)
             userIdRef.current = uid
@@ -54,7 +54,10 @@ export default function MentorPage() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search)
         const prefill = params.get('prefill')
-        if (prefill) setInput(decodeURIComponent(prefill))
+        if (prefill) {
+            setInput(decodeURIComponent(prefill))
+            window.history.replaceState(null, '', window.location.pathname)
+        }
     }, [])
 
     const initChats = async (uid: string) => {
