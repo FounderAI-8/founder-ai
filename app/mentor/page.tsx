@@ -51,6 +51,12 @@ export default function MentorPage() {
         })
     }, [])
 
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search)
+        const prefill = params.get('prefill')
+        if (prefill) setInput(decodeURIComponent(prefill))
+    }, [])
+
     const initChats = async (uid: string) => {
         let list: Chat[] = []
         try {

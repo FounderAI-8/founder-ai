@@ -5,6 +5,12 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import {
+  CHECKLIST_BY_TRACK,
+  NEXT_STEPS_BY_TRACK_STAGE,
+  DEFAULT_CHECKLIST,
+  DEFAULT_NEXT_STEPS,
+} from '@/lib/dashboard-content'
 
 interface Chat {
   id: string
@@ -15,6 +21,8 @@ interface Chat {
 interface Profile {
   stage?: string
   idea?: string
+  track?: string
+  problem?: string
 }
 
 export default function Dashboard() {
@@ -33,7 +41,7 @@ export default function Dashboard() {
       setUser(u)
 
       const [profileRes, chatsRes] = await Promise.all([
-        supabase.from('founder_profiles').select('stage, idea').eq('user_id', u.id).single(),
+        supabase.from('founder_profiles').select('stage, idea, track, problem').eq('user_id', u.id).single(),
         fetch(`/api/chats?userId=${u.id}`)
       ])
 
@@ -141,6 +149,74 @@ export default function Dashboard() {
             <p className="text-2xl font-bold">0</p>
           </div>
         </div>
+
+        {/* ── Prossimi passi consigliati ── */}
+        {(() => {
+          const steps = (profile?.track && profile?.stage)
+            ? (NEXT_STEPS_BY_TRACK_STAGE[profile.track]?.[profile.stage] ?? DEFAULT_NEXT_STEPS)
+            : DEFAULT_NEXT_STEPS
+          return (
+            <div className="mt-8">
+              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Prossimi passi consigliati</h2>
+              <div className="bg-[#0f1229] border border-[#1e2340] rounded-2xl p-6 flex flex-col gap-3">
+                {steps.map((step, i) => (
+                  <div key={i} className="flex items-start gap-3">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#1e2340] text-[#7F77DD] text-xs flex items-center justify-center font-semibold mt-0.5">{i + 1}</span>
+                    <p className="text-sm text-gray-300 leading-relaxed">{step}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* ── Cosa monitorare ── */}
+        {(() => {
+          const checklist = profile?.track
+            ? (CHECKLIST_BY_TRACK[profile.track] ?? DEFAULT_CHECKLIST)
+            : DEFAULT_CHECKLIST
+          return (
+            <div className="mt-8">
+              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">{checklist.title}</h2>
+              <div className="bg-[#0f1229] border border-[#1e2340] rounded-2xl p-6 flex flex-col gap-2">
+                {checklist.items.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3">
+                    <span className="flex-shrink-0 w-4 h-4 rounded border border-[#534AB7] mt-0.5" />
+                    <p className="text-sm text-gray-300">{item}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
+
+        {/* ── Chiedi a Sloan ── */}
+        {(() => {
+          const q1 = profile?.problem
+            ? `Aiutami a capire se questo è davvero la priorità numero uno adesso: ${profile.problem}`
+            : "Qual è la cosa più importante su cui concentrarmi in questo momento?"
+          const q2 = profile?.track === 'smb'
+            ? "Come dovrei gestire la cassa in questa fase del mio business?"
+            : "Quali metriche dovrei guardare con più attenzione in questa fase?"
+          const q3 = "Qual è il prossimo passo concreto per me questa settimana?"
+          return (
+            <div className="mt-8 mb-2">
+              <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Chiedi a Sloan</h2>
+              <div className="flex flex-col gap-3">
+                {[q1, q2, q3].map((q, i) => (
+                  <button
+                    key={i}
+                    onClick={() => router.push(`/mentor?prefill=${encodeURIComponent(q)}`)}
+                    className="bg-[#0f1229] border border-[#1e2340] rounded-xl px-5 py-4 text-left hover:border-[#534AB7] hover:bg-[#0f1229] transition-colors group"
+                  >
+                    <p className="text-sm text-gray-300 group-hover:text-white transition-colors leading-relaxed">{q}</p>
+                    <p className="text-xs text-[#534AB7] mt-2 font-medium">Chiedi →</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
 
       </main>
     </div>

@@ -109,7 +109,7 @@ export default function Onboarding() {
       alert('Non sono riuscito a salvare il profilo. Riprova.')
       return
     }
-    router.push('/mentor')
+    router.push('/dashboard')
   }
 
   const sections = ['Il tuo progetto', 'Il tuo mercato', 'Le tue risorse', 'Il tuo background', 'Obiettivi e mindset']
