@@ -21,7 +21,9 @@ export async function GET(req: NextRequest) {
   const params = req.nextUrl.searchParams
   const profileId = params.get('profileId')
   const tempToken = params.get('tempToken')
-  const platform = params.get('platform') ?? 'unknown'
+  // Real Zernio callback uses 'connected' for the platform name (observed in production logs);
+  // 'platform' is what the official docs describe — keep as fallback in case it changes again.
+  const platform = params.get('connected') ?? params.get('platform') ?? 'unknown'
   const step = params.get('step')
   const userProfileRaw = params.get('userProfile')
 
