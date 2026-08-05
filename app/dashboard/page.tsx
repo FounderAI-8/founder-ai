@@ -38,7 +38,9 @@ export default function Dashboard() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [recentChats, setRecentChats] = useState<Chat[]>([])
   const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([])
+  const [socialConnecting, setSocialConnecting] = useState<string | null>(null)
   const [socialConnectMsg, setSocialConnectMsg] = useState<string | null>(null)
+  const [socialSuccessMsg, setSocialSuccessMsg] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -75,6 +77,39 @@ export default function Dashboard() {
       }
     })
   }, [])
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const connected = params.get('social_connected')
+    const error = params.get('social_error')
+    if (connected || error) {
+      window.history.replaceState(null, '', window.location.pathname)
+      if (connected) setSocialSuccessMsg(`Account ${connected} connesso con successo!`)
+      if (error) setSocialConnectMsg('Connessione non riuscita. Riprova o contatta il supporto.')
+    }
+  }, [])
+
+  const handleSocialConnect = async (platform: string) => {
+    setSocialConnecting(platform)
+    setSocialConnectMsg(null)
+    try {
+      const res = await fetch('/api/social/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ platform: platform.toLowerCase(), userId: user.id }),
+      })
+      const data = await res.json()
+      if (data.authUrl) {
+        window.location.href = data.authUrl
+      } else {
+        setSocialConnectMsg('Impossibile avviare la connessione. Riprova.')
+        setSocialConnecting(null)
+      }
+    } catch {
+      setSocialConnectMsg('Impossibile avviare la connessione. Riprova.')
+      setSocialConnecting(null)
+    }
+  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -276,23 +311,27 @@ export default function Dashboard() {
 
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">Connetti un account</p>
-                <div className="flex flex-wrap gap-2">
-                  {(['Instagram', 'TikTok', 'YouTube'] as const).map(platform => (
-                    <button
-                      key={platform}
-                      onClick={() => {
-                        setSocialConnectMsg(`Integrazione ${platform} in arrivo — questa funzionalità è ancora in costruzione.`)
-                        setTimeout(() => setSocialConnectMsg(null), 4000)
-                      }}
-                      className="bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-gray-300 hover:border-[#534AB7] hover:text-white transition-colors"
-                    >
-                      + {platform}
-                    </button>
-                  ))}
-                </div>
-                {socialConnectMsg && (
-                  <p className="mt-3 text-sm text-[#7F77DD]">{socialConnectMsg}</p>
+                {socialSuccessMsg && (
+                  <p className="mb-3 text-sm text-green-400">{socialSuccessMsg}</p>
                 )}
+                {socialConnectMsg && (
+                  <p className="mb-3 text-sm text-red-400">{socialConnectMsg}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {(['Instagram', 'TikTok', 'YouTube'] as const).map(platform => {
+                    const isConnecting = socialConnecting === platform
+                    return (
+                      <button
+                        key={platform}
+                        onClick={() => handleSocialConnect(platform)}
+                        disabled={socialConnecting !== null}
+                        className="bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-gray-300 hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isConnecting ? `Connessione ${platform}…` : `+ ${platform}`}
+                      </button>
+                    )
+                  })}
+                </div>
               </div>
             </div>
           )}
