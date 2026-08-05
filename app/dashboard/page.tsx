@@ -23,12 +23,22 @@ interface Profile {
   idea?: string
   track?: string
   problem?: string
+  plan?: string
+}
+
+interface SocialConnection {
+  id: string
+  platform: string
+  account_handle?: string
+  status: string
 }
 
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [recentChats, setRecentChats] = useState<Chat[]>([])
+  const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([])
+  const [socialConnectMsg, setSocialConnectMsg] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -41,7 +51,7 @@ export default function Dashboard() {
       setUser(u)
 
       const [profileRes, chatsRes] = await Promise.all([
-        supabase.from('founder_profiles').select('stage, idea, track, problem').eq('user_id', u.id).single(),
+        supabase.from('founder_profiles').select('stage, idea, track, problem, plan').eq('user_id', u.id).single(),
         fetch(`/api/chats?userId=${u.id}`)
       ])
 
@@ -54,6 +64,14 @@ export default function Dashboard() {
       if (chatsRes.ok) {
         const chats: Chat[] = await chatsRes.json()
         if (Array.isArray(chats)) setRecentChats(chats.slice(0, 3))
+      }
+
+      if (profileRes.data?.plan === 'pro') {
+        const { data: connections } = await supabase
+          .from('social_connections')
+          .select('id, platform, account_handle, status')
+          .eq('user_id', u.id)
+        if (connections) setSocialConnections(connections)
       }
     })
   }, [])
@@ -217,6 +235,68 @@ export default function Dashboard() {
             </div>
           )
         })()}
+
+        {/* ── Social Media Manager ── */}
+        <div className="mt-8 mb-2">
+          <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Social Media Manager</h2>
+
+          {profile?.plan !== 'pro' ? (
+            <div className="bg-[#0f1229] border border-[#1e2340] rounded-2xl p-6 opacity-80">
+              <div className="flex items-center gap-3 mb-3">
+                <span className="text-xs font-semibold uppercase tracking-wider text-[#534AB7] bg-[#1e1a40] px-2 py-1 rounded">Pro</span>
+                <p className="text-sm font-semibold text-gray-300">Social Media Manager — Disponibile con il piano Pro</p>
+              </div>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                Crea e pubblica contenuti social con l&apos;aiuto di Sloan, resta aggiornato sui trend del tuo settore e gestisci tutti i tuoi account da un unico posto.
+              </p>
+            </div>
+          ) : (
+            <div className="bg-[#0f1229] border border-[#3B5BDB] rounded-2xl p-6">
+              <p className="text-sm text-[#7F77DD] font-medium mb-4">Account connessi</p>
+
+              {socialConnections.length === 0 ? (
+                <p className="text-sm text-gray-500 mb-5">Nessun account connesso. Collega i tuoi profili social per iniziare.</p>
+              ) : (
+                <div className="flex flex-col gap-2 mb-5">
+                  {socialConnections.map(conn => (
+                    <div key={conn.id} className="flex items-center justify-between bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-3">
+                      <div>
+                        <span className="text-sm font-medium text-white capitalize">{conn.platform}</span>
+                        {conn.account_handle && (
+                          <span className="text-xs text-gray-500 ml-2">@{conn.account_handle}</span>
+                        )}
+                      </div>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${conn.status === 'connected' ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
+                        {conn.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">Connetti un account</p>
+                <div className="flex flex-wrap gap-2">
+                  {(['Instagram', 'TikTok', 'YouTube'] as const).map(platform => (
+                    <button
+                      key={platform}
+                      onClick={() => {
+                        setSocialConnectMsg(`Integrazione ${platform} in arrivo — questa funzionalità è ancora in costruzione.`)
+                        setTimeout(() => setSocialConnectMsg(null), 4000)
+                      }}
+                      className="bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-gray-300 hover:border-[#534AB7] hover:text-white transition-colors"
+                    >
+                      + {platform}
+                    </button>
+                  ))}
+                </div>
+                {socialConnectMsg && (
+                  <p className="mt-3 text-sm text-[#7F77DD]">{socialConnectMsg}</p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
       </main>
     </div>
