@@ -39,6 +39,7 @@ export default function Dashboard() {
   const [recentChats, setRecentChats] = useState<Chat[]>([])
   const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([])
   const [socialConnecting, setSocialConnecting] = useState<string | null>(null)
+  const [socialDisconnecting, setSocialDisconnecting] = useState<string | null>(null)
   const [socialConnectMsg, setSocialConnectMsg] = useState<string | null>(null)
   const [socialSuccessMsg, setSocialSuccessMsg] = useState<string | null>(null)
   const router = useRouter()
@@ -88,6 +89,30 @@ export default function Dashboard() {
       if (error) setSocialConnectMsg('Connessione non riuscita. Riprova o contatta il supporto.')
     }
   }, [])
+
+  const handleSocialDisconnect = async (connectionId: string, platform: string) => {
+    if (!window.confirm(`Vuoi davvero disconnettere l'account ${platform}?`)) return
+    setSocialDisconnecting(connectionId)
+    setSocialConnectMsg(null)
+    setSocialSuccessMsg(null)
+    try {
+      const res = await fetch('/api/social/disconnect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ connectionId }),
+      })
+      if (res.ok) {
+        setSocialConnections(prev => prev.filter(c => c.id !== connectionId))
+        setSocialSuccessMsg(`Account ${platform} disconnesso.`)
+      } else {
+        setSocialConnectMsg('Disconnessione non riuscita. Riprova.')
+      }
+    } catch {
+      setSocialConnectMsg('Disconnessione non riuscita. Riprova.')
+    } finally {
+      setSocialDisconnecting(null)
+    }
+  }
 
   const handleSocialConnect = async (platform: string) => {
     setSocialConnecting(platform)
@@ -301,9 +326,18 @@ export default function Dashboard() {
                           <span className="text-xs text-gray-500 ml-2">@{conn.account_handle}</span>
                         )}
                       </div>
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${conn.status === 'connected' ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
-                        {conn.status}
-                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${conn.status === 'connected' ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
+                          {conn.status}
+                        </span>
+                        <button
+                          onClick={() => handleSocialDisconnect(conn.id, conn.platform)}
+                          disabled={socialDisconnecting === conn.id}
+                          className="text-xs text-red-400 hover:text-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {socialDisconnecting === conn.id ? 'Disconnessione…' : 'Disconnetti'}
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
