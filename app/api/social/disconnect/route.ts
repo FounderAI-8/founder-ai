@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
+import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -19,18 +19,16 @@ const zHeaders = {
 }
 
 export async function POST(req: NextRequest) {
-  const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-    cookies: {
-      getAll() {
-        return req.cookies.getAll()
-      },
-      setAll() {
-        // No-op: token refresh not needed for a single DELETE operation
-      },
-    },
-  })
+  // Auth: client sends its JWT in Authorization header; we verify it server-side.
+  // This app uses localStorage-based sessions (no SSR cookies), so cookie-based
+  // auth helpers won't find a session — the token must come from the client.
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  const { data: { user } } = await supabase.auth.getUser(token)
   if (!user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
