@@ -30,6 +30,9 @@ export async function GET(req: NextRequest) {
   const dashboardUrl = new URL('/dashboard', req.nextUrl.origin)
 
   if (!profileId) {
+    console.error(
+      `[social/callback] missing profileId — full query string: ${params.toString()}`
+    )
     dashboardUrl.searchParams.set('social_error', 'missing_profile')
     return NextResponse.redirect(dashboardUrl)
   }
@@ -43,6 +46,9 @@ export async function GET(req: NextRequest) {
   const userId: string | undefined = profiles?.[0]?.user_id
 
   if (!userId) {
+    console.error(
+      `[social/callback] user_not_found — profileId=${profileId} supabase_response=${JSON.stringify(profiles)}`
+    )
     dashboardUrl.searchParams.set('social_error', 'user_not_found')
     return NextResponse.redirect(dashboardUrl)
   }
