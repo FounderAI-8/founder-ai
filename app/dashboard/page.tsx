@@ -347,6 +347,17 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {socialConnections.length > 0 && (
+                <div className="mb-5">
+                  <Link
+                    href="/social/compose"
+                    className="inline-block bg-[#3B5BDB] text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-[#5C7CFA] transition-colors"
+                  >
+                    Componi un post →
+                  </Link>
+                </div>
+              )}
+
               <div>
                 <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">Connetti un account</p>
                 {socialSuccessMsg && (
