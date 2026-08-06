@@ -98,13 +98,20 @@ export async function GET(req: NextRequest) {
     }
   } else {
     // Direct OAuth platforms (TikTok, YouTube, Twitter, etc.): connection is complete.
-    // Fetch the accounts list to retrieve the accountId and handle of the newly connected account.
+    // Zernio redirects back immediately after Google/TikTok OAuth, but its backend may not have
+    // persisted the new account yet — wait briefly before querying /accounts.
+    await new Promise(resolve => setTimeout(resolve, 1500))
+
     const accountsRes = await fetch(
       `${ZERNIO_API}/accounts?profileId=${profileId}`,
       { headers: zHeaders }
     )
 
-    if (accountsRes.ok) {
+    if (!accountsRes.ok) {
+      console.error(
+        `[social/callback] /accounts failed: status=${accountsRes.status} platform=${platform} profileId=${profileId} body=${await accountsRes.text()}`
+      )
+    } else {
       const accountsData = await accountsRes.json()
       const accounts: Array<{
         _id: string
@@ -118,7 +125,11 @@ export async function GET(req: NextRequest) {
       const match =
         accounts.find(a => a.platform === platform) ?? accounts[accounts.length - 1]
 
-      if (match) {
+      if (!match) {
+        console.error(
+          `[social/callback] no account match: platform=${platform} profileId=${profileId} accounts=${JSON.stringify(accounts)}`
+        )
+      } else {
         aggregatorAccountId = match._id
         accountHandle = match.username ?? match.handle ?? match.name ?? null
       }
