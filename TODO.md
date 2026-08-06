@@ -167,3 +167,13 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       appartenga all'utente che fa la richiesta. Rischio pratico basso (UUID casuali difficili 
       da indovinare), ma va sistemato prima di aprire il prodotto oltre un gruppo ristretto di 
       beta tester fidati.
+- [ ] Controllo generale RLS su tutte le tabelle Supabase: `social_connections` è stata creata 
+      con RLS abilitata ma senza nessuna policy, causando letture silenziosamente vuote dal 
+      browser per giorni prima di essere scoperto (fix applicato: policy SELECT su 
+      auth.uid() = user_id). Verificare se lo stesso problema esiste su altre tabelle create 
+      di recente — eseguire per ogni tabella:
+      `select tablename, rowsecurity from pg_tables where tablename = '<nome_tabella>';`
+      `select policyname, cmd from pg_policies where tablename = '<nome_tabella>';`
+      e assicurarsi che ogni tabella con RLS attiva abbia almeno le policy SELECT/INSERT/UPDATE 
+      necessarie per il funzionamento previsto, altrimenti disabilitare RLS se l'accesso è 
+      gestito solo lato server con service role key.
