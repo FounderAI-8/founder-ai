@@ -73,7 +73,7 @@ async function generateContent(sector: string, kind: string): Promise<unknown[]>
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const response: any = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 2048,
+        max_tokens: 4096,
         system: SYSTEM_PROMPT,
         messages,
         tools: [webSearchTool],
