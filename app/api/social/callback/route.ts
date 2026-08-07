@@ -27,14 +27,14 @@ export async function GET(req: NextRequest) {
   const step = params.get('step')
   const userProfileRaw = params.get('userProfile')
 
-  const dashboardUrl = new URL('/dashboard', req.nextUrl.origin)
+  const socialUrl = new URL('/social', req.nextUrl.origin)
 
   if (!profileId) {
     console.error(
       `[social/callback] missing profileId — full query string: ${params.toString()}`
     )
-    dashboardUrl.searchParams.set('social_error', 'missing_profile')
-    return NextResponse.redirect(dashboardUrl)
+    socialUrl.searchParams.set('social_error', 'missing_profile')
+    return NextResponse.redirect(socialUrl)
   }
 
   // Resolve user_id from zernio_profile_id stored in founder_profiles
@@ -49,8 +49,8 @@ export async function GET(req: NextRequest) {
     console.error(
       `[social/callback] user_not_found — profileId=${profileId} supabase_response=${JSON.stringify(profiles)}`
     )
-    dashboardUrl.searchParams.set('social_error', 'user_not_found')
-    return NextResponse.redirect(dashboardUrl)
+    socialUrl.searchParams.set('social_error', 'user_not_found')
+    return NextResponse.redirect(socialUrl)
   }
 
   let aggregatorAccountId: string | null = null
@@ -144,8 +144,8 @@ export async function GET(req: NextRequest) {
 
   // If we couldn't retrieve an accountId, the connection failed silently — signal the error
   if (!aggregatorAccountId) {
-    dashboardUrl.searchParams.set('social_error', 'connection_failed')
-    return NextResponse.redirect(dashboardUrl)
+    socialUrl.searchParams.set('social_error', 'connection_failed')
+    return NextResponse.redirect(socialUrl)
   }
 
   // Upsert into social_connections — unique constraint on (user_id, platform) handles deduplication
@@ -165,6 +165,6 @@ export async function GET(req: NextRequest) {
     }),
   })
 
-  dashboardUrl.searchParams.set('social_connected', platform)
-  return NextResponse.redirect(dashboardUrl)
+  socialUrl.searchParams.set('social_connected', platform)
+  return NextResponse.redirect(socialUrl)
 }

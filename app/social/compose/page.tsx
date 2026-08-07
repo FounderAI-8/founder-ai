@@ -123,8 +123,8 @@ export default function ComposePage() {
   return (
     <div className="min-h-screen bg-[#0a0c1a] text-white">
       <nav className="border-b border-[#1e2340] px-8 py-4">
-        <Link href="/dashboard" className="text-sm text-gray-400 hover:text-white transition-colors">
-          ← Torna alla Dashboard
+        <Link href="/social" className="text-sm text-gray-400 hover:text-white transition-colors">
+          ← Torna al Social Manager
         </Link>
       </nav>
 

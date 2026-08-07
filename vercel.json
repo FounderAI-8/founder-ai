@@ -1,0 +1,6 @@
+{
+  "crons": [
+    { "path": "/api/social/insights/refresh?kind=dates", "schedule": "0 3 1 * *" },
+    { "path": "/api/social/insights/refresh?kind=trends", "schedule": "0 3 * * 1" }
+  ]
+}

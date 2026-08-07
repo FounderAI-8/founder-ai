@@ -26,22 +26,11 @@ interface Profile {
   plan?: string
 }
 
-interface SocialConnection {
-  id: string
-  platform: string
-  account_handle?: string
-  status: string
-}
 
 export default function Dashboard() {
   const [user, setUser] = useState<any>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [recentChats, setRecentChats] = useState<Chat[]>([])
-  const [socialConnections, setSocialConnections] = useState<SocialConnection[]>([])
-  const [socialConnecting, setSocialConnecting] = useState<string | null>(null)
-  const [socialDisconnecting, setSocialDisconnecting] = useState<string | null>(null)
-  const [socialConnectMsg, setSocialConnectMsg] = useState<string | null>(null)
-  const [socialSuccessMsg, setSocialSuccessMsg] = useState<string | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -69,76 +58,8 @@ export default function Dashboard() {
         if (Array.isArray(chats)) setRecentChats(chats.slice(0, 3))
       }
 
-      if (profileRes.data?.plan === 'pro') {
-        const { data: connections } = await supabase
-          .from('social_connections')
-          .select('id, platform, account_handle, status')
-          .eq('user_id', u.id)
-        if (connections) setSocialConnections(connections)
-      }
     })
   }, [])
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    const connected = params.get('social_connected')
-    const error = params.get('social_error')
-    if (connected || error) {
-      window.history.replaceState(null, '', window.location.pathname)
-      if (connected) setSocialSuccessMsg(`Account ${connected} connesso con successo!`)
-      if (error) setSocialConnectMsg('Connessione non riuscita. Riprova o contatta il supporto.')
-    }
-  }, [])
-
-  const handleSocialDisconnect = async (connectionId: string, platform: string) => {
-    if (!window.confirm(`Vuoi davvero disconnettere l'account ${platform}?`)) return
-    setSocialDisconnecting(connectionId)
-    setSocialConnectMsg(null)
-    setSocialSuccessMsg(null)
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch('/api/social/disconnect', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session?.access_token ?? ''}`,
-        },
-        body: JSON.stringify({ connectionId }),
-      })
-      if (res.ok) {
-        setSocialConnections(prev => prev.filter(c => c.id !== connectionId))
-        setSocialSuccessMsg(`Account ${platform} disconnesso.`)
-      } else {
-        setSocialConnectMsg('Disconnessione non riuscita. Riprova.')
-      }
-    } catch {
-      setSocialConnectMsg('Disconnessione non riuscita. Riprova.')
-    } finally {
-      setSocialDisconnecting(null)
-    }
-  }
-
-  const handleSocialConnect = async (platform: string) => {
-    setSocialConnecting(platform)
-    setSocialConnectMsg(null)
-    try {
-      const res = await fetch('/api/social/connect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platform: platform.toLowerCase(), userId: user.id }),
-      })
-      const data = await res.json()
-      if (data.authUrl) {
-        window.location.href = data.authUrl
-      } else {
-        setSocialConnectMsg('Impossibile avviare la connessione. Riprova.')
-        setSocialConnecting(null)
-      }
-    } catch {
-      setSocialConnectMsg('Impossibile avviare la connessione. Riprova.')
-      setSocialConnecting(null)
-    }
-  }
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
@@ -315,73 +236,14 @@ export default function Dashboard() {
               </p>
             </div>
           ) : (
-            <div className="bg-[#0f1229] border border-[#3B5BDB] rounded-2xl p-6">
-              <p className="text-sm text-[#7F77DD] font-medium mb-4">Account connessi</p>
-
-              {socialConnections.length === 0 ? (
-                <p className="text-sm text-gray-500 mb-5">Nessun account connesso. Collega i tuoi profili social per iniziare.</p>
-              ) : (
-                <div className="flex flex-col gap-2 mb-5">
-                  {socialConnections.map(conn => (
-                    <div key={conn.id} className="flex items-center justify-between bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-3">
-                      <div>
-                        <span className="text-sm font-medium text-white capitalize">{conn.platform}</span>
-                        {conn.account_handle && (
-                          <span className="text-xs text-gray-500 ml-2">@{conn.account_handle}</span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${conn.status === 'connected' ? 'bg-green-900 text-green-400' : 'bg-yellow-900 text-yellow-400'}`}>
-                          {conn.status}
-                        </span>
-                        <button
-                          onClick={() => handleSocialDisconnect(conn.id, conn.platform)}
-                          disabled={socialDisconnecting === conn.id}
-                          className="text-xs text-red-400 hover:text-red-300 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {socialDisconnecting === conn.id ? 'Disconnessione…' : 'Disconnetti'}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {socialConnections.length > 0 && (
-                <div className="mb-5">
-                  <Link
-                    href="/social/compose"
-                    className="inline-block bg-[#3B5BDB] text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-[#5C7CFA] transition-colors"
-                  >
-                    Componi un post →
-                  </Link>
-                </div>
-              )}
-
-              <div>
-                <p className="text-xs text-gray-500 uppercase tracking-wider font-semibold mb-3">Connetti un account</p>
-                {socialSuccessMsg && (
-                  <p className="mb-3 text-sm text-green-400">{socialSuccessMsg}</p>
-                )}
-                {socialConnectMsg && (
-                  <p className="mb-3 text-sm text-red-400">{socialConnectMsg}</p>
-                )}
-                <div className="flex flex-wrap gap-2">
-                  {(['Instagram', 'TikTok', 'YouTube'] as const).map(platform => {
-                    const isConnecting = socialConnecting === platform
-                    return (
-                      <button
-                        key={platform}
-                        onClick={() => handleSocialConnect(platform)}
-                        disabled={socialConnecting !== null}
-                        className="bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-gray-300 hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {isConnecting ? `Connessione ${platform}…` : `+ ${platform}`}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+            <div className="bg-[#0f1229] border border-[#3B5BDB] rounded-2xl p-5 flex items-center justify-between gap-4">
+              <p className="text-sm text-gray-400">Gestisci account, crea post e scopri trend e date rilevanti per il tuo settore.</p>
+              <Link
+                href="/social"
+                className="flex-shrink-0 bg-[#3B5BDB] text-white rounded-xl px-5 py-2.5 text-sm font-semibold hover:bg-[#5C7CFA] transition-colors"
+              >
+                Apri Social Manager →
+              </Link>
             </div>
           )}
         </div>
