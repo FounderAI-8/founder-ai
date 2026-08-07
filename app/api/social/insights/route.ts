@@ -51,9 +51,9 @@ async function saveToCache(sector: string, kind: string, items: unknown[]) {
 
 const USER_PROMPTS: Record<string, (sector: string) => string> = {
   dates: (sector) =>
-    `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector} in Italia — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`,
+    `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector} in Italia — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. I campi why_relevant e suggestion devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`,
   trends: (sector) =>
-    `Identifica 6-8 trend di contenuto attuali su Instagram, TikTok e YouTube, riadattati per un'attività nel settore ${sector}. Per ciascuno: piattaforma, in cosa consiste il trend, come un'attività di questo settore potrebbe usarlo concretamente. Rispondi in formato JSON: un array di oggetti con i campi platform, trend_title, description, how_to_use.`,
+    `Identifica 6-8 trend di contenuto attuali su Instagram, TikTok e YouTube, riadattati per un'attività nel settore ${sector}. Per ciascuno: piattaforma, in cosa consiste il trend, come un'attività di questo settore potrebbe usarlo concretamente. I campi description e how_to_use devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi platform, trend_title, description, how_to_use.`,
 }
 
 const SYSTEM_PROMPT =
