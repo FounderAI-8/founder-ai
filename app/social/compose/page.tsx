@@ -23,6 +23,10 @@ export default function ComposePage() {
   const [publishing, setPublishing] = useState(false)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [imageGenerating, setImageGenerating] = useState(false)
+  const [imageCorrection, setImageCorrection] = useState('')
+  const [correctionHistory, setCorrectionHistory] = useState<string[]>([])
   const router = useRouter()
 
   useEffect(() => {
@@ -74,6 +78,64 @@ export default function ComposePage() {
     }
   }
 
+  const handleGenerateImage = async () => {
+    setImageGenerating(true)
+    setErrorMsg(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const selectedPlatforms = connections
+        .filter(c => selectedIds.includes(c.id))
+        .map(c => c.platform)
+        .join(', ')
+      const prompt = `Immagine per un post social: ${brief.trim()}, stile professionale, adatto a ${selectedPlatforms}`
+      const res = await fetch('/api/social/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ prompt }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setImageUrl(data.imageUrl)
+        setCorrectionHistory([])
+      } else {
+        setErrorMsg('Generazione immagine non riuscita. Riprova.')
+      }
+    } catch {
+      setErrorMsg('Generazione immagine non riuscita. Riprova.')
+    } finally {
+      setImageGenerating(false)
+    }
+  }
+
+  const handleRegenerateImage = async () => {
+    if (!imageCorrection.trim()) return
+    setImageGenerating(true)
+    setErrorMsg(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const newHistory = [...correctionHistory, imageCorrection.trim()]
+      const corrections = newHistory.map((c, i) => `${i + 1}) ${c}`).join(' ')
+      const prompt = `Immagine per: ${brief.trim()}. Modifiche richieste in ordine: ${corrections}`
+      const res = await fetch('/api/social/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ prompt }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setImageUrl(data.imageUrl)
+        setCorrectionHistory(newHistory)
+        setImageCorrection('')
+      } else {
+        setErrorMsg('Generazione immagine non riuscita. Riprova.')
+      }
+    } catch {
+      setErrorMsg('Generazione immagine non riuscita. Riprova.')
+    } finally {
+      setImageGenerating(false)
+    }
+  }
+
   const handlePublish = async () => {
     if (!selectedIds.length || !generatedContent.trim()) return
     if (publishMode === 'schedule' && !scheduledFor) {
@@ -89,6 +151,7 @@ export default function ComposePage() {
         connectionIds: selectedIds,
         content: generatedContent.trim(),
       }
+      if (imageUrl) body.imageUrl = imageUrl
       if (publishMode === 'schedule') {
         body.scheduledFor = new Date(scheduledFor).toISOString()
         body.timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -108,6 +171,8 @@ export default function ComposePage() {
         setBrief('')
         setSelectedIds([])
         setScheduledFor('')
+        setImageUrl(null)
+        setCorrectionHistory([])
       } else {
         setErrorMsg(data.error ?? 'Pubblicazione non riuscita. Riprova.')
       }
@@ -208,6 +273,46 @@ export default function ComposePage() {
               rows={6}
               className="w-full bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-[#3B5BDB] resize-none mb-5"
             />
+
+            {/* Image generation */}
+            <div className="mb-5">
+              <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Immagine (opzionale)</p>
+              {imageUrl ? (
+                <div>
+                  <img src={imageUrl} alt="Immagine generata" className="w-full rounded-xl mb-3" />
+                  <div className="flex gap-2 mb-3">
+                    <input
+                      type="text"
+                      value={imageCorrection}
+                      onChange={e => setImageCorrection(e.target.value)}
+                      placeholder='Es. "rendila più luminosa" o "aggiungi più persone"'
+                      className="flex-1 bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#3B5BDB]"
+                    />
+                    <button
+                      onClick={handleRegenerateImage}
+                      disabled={imageGenerating || !imageCorrection.trim()}
+                      className="bg-[#1e2340] border border-[#534AB7] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                    >
+                      {imageGenerating ? 'Generazione…' : 'Rigenera'}
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => { setImageUrl(null); setCorrectionHistory([]) }}
+                    className="text-sm text-gray-500 hover:text-red-400 transition-colors"
+                  >
+                    Rimuovi immagine
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={handleGenerateImage}
+                  disabled={imageGenerating}
+                  className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {imageGenerating ? 'Generazione immagine…' : 'Genera immagine'}
+                </button>
+              )}
+            </div>
 
             {/* Publish mode toggle */}
             <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Quando pubblicare</p>

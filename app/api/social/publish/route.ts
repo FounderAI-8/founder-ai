@@ -26,7 +26,7 @@ export async function POST(req: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser(token)
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { connectionIds, content, scheduledFor, timezone } = await req.json()
+  const { connectionIds, content, scheduledFor, timezone, imageUrl } = await req.json()
   if (!connectionIds?.length || !content) {
     return NextResponse.json({ error: 'Missing connectionIds or content' }, { status: 400 })
   }
@@ -54,6 +54,7 @@ export async function POST(req: NextRequest) {
   }))
 
   const body: Record<string, unknown> = { content, platforms }
+  if (imageUrl) body.mediaItems = [{ url: imageUrl, type: 'image' }]
   if (scheduledFor) {
     body.scheduledFor = scheduledFor
     body.timezone = timezone ?? 'Europe/Rome'
