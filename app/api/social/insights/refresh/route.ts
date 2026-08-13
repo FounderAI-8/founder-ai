@@ -13,9 +13,15 @@ const sbHeaders = {
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
-const USER_PROMPTS: Record<string, (sector: string) => string> = {
-  dates: (sector) =>
-    `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector} in Italia — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. I campi why_relevant e suggestion devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`,
+function buildCacheKey(sector: string, city?: string): string {
+  return city ? `${sector}|${city}` : sector
+}
+
+const USER_PROMPTS: Record<string, (sector: string, city?: string) => string> = {
+  dates: (sector, city) => {
+    const cityCtx = city ? `, in particolare nella zona di ${city} se rilevante` : ''
+    return `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector} in Italia${cityCtx} — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. I campi why_relevant e suggestion devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`
+  },
   trends: (sector) =>
     `Identifica 6-8 trend di contenuto attuali su Instagram, TikTok e YouTube, riadattati per un'attività nel settore ${sector}. Per ciascuno: piattaforma, in cosa consiste il trend, come un'attività di questo settore potrebbe usarlo concretamente. I campi description e how_to_use devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi platform, trend_title, description, how_to_use.`,
 }
@@ -23,11 +29,11 @@ const USER_PROMPTS: Record<string, (sector: string) => string> = {
 const SYSTEM_PROMPT =
   'Sei un esperto di marketing e social media in Italia. Usa il web_search tool per cercare informazioni aggiornate. Rispondi sempre e solo con JSON valido (array), senza markdown, senza backtick, senza preamboli o spiegazioni.'
 
-async function generateContent(sector: string, kind: string): Promise<unknown[]> {
+async function generateContent(sector: string, kind: string, city?: string): Promise<unknown[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const webSearchTool: any = { type: 'web_search_20250305', name: 'web_search' }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const messages: any[] = [{ role: 'user', content: USER_PROMPTS[kind](sector) }]
+  const messages: any[] = [{ role: 'user', content: USER_PROMPTS[kind](sector, city) }]
   let responseText = ''
 
   try {
@@ -84,16 +90,16 @@ async function generateContent(sector: string, kind: string): Promise<unknown[]>
   }
 }
 
-async function saveToCache(sector: string, kind: string, items: unknown[]) {
+async function saveToCache(cacheKey: string, kind: string, items: unknown[]) {
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/sector_content_cache`, {
       method: 'POST',
       headers: { ...sbHeaders, Prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify({ sector, kind, items, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ sector: cacheKey, kind, items, updated_at: new Date().toISOString() }),
     })
   } catch (err) {
     console.error(
-      `[social/insights/refresh] saveToCache failed sector=${sector} kind=${kind}:`,
+      `[social/insights/refresh] saveToCache failed cacheKey=${cacheKey} kind=${kind}:`,
       err instanceof Error ? err.message : err
     )
   }
@@ -112,32 +118,40 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid kind — use "dates" or "trends"' }, { status: 400 })
   }
 
-  // Fetch all distinct sectors currently in use
-  const sectorsRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/founder_profiles?select=sector&sector=not.is.null`,
+  // Fetch all distinct (sector, city) pairs currently in use
+  const profilesRes = await fetch(
+    `${SUPABASE_URL}/rest/v1/founder_profiles?select=sector,city&sector=not.is.null`,
     { headers: sbHeaders }
   )
-  const rows: Array<{ sector: string }> = await sectorsRes.json()
-  const sectors = [...new Set(rows.map(r => r.sector).filter(Boolean))]
+  const rows: Array<{ sector: string; city?: string }> = await profilesRes.json()
+  const seen = new Set<string>()
+  const pairs = rows
+    .filter(r => r.sector)
+    .reduce<Array<{ sector: string; city?: string }>>((acc, r) => {
+      const key = buildCacheKey(r.sector, r.city || undefined)
+      if (!seen.has(key)) { seen.add(key); acc.push({ sector: r.sector, city: r.city || undefined }) }
+      return acc
+    }, [])
 
-  if (!sectors.length) {
-    return NextResponse.json({ updated: 0, sectors: [] })
+  if (!pairs.length) {
+    return NextResponse.json({ updated: 0, pairs: [] })
   }
 
-  const results: Array<{ sector: string; ok: boolean }> = []
+  const results: Array<{ cacheKey: string; ok: boolean }> = []
 
-  for (const sector of sectors) {
-    const items = await generateContent(sector, kind)
+  for (const { sector, city } of pairs) {
+    const cacheKey = buildCacheKey(sector, city)
+    const items = await generateContent(sector, kind, city)
     if (items.length > 0) {
-      await saveToCache(sector, kind, items)
-      results.push({ sector, ok: true })
+      await saveToCache(cacheKey, kind, items)
+      results.push({ cacheKey, ok: true })
     } else {
-      results.push({ sector, ok: false })
+      results.push({ cacheKey, ok: false })
     }
   }
 
   const updated = results.filter(r => r.ok).length
-  console.log(`[social/insights/refresh] kind=${kind} updated=${updated}/${sectors.length}`)
+  console.log(`[social/insights/refresh] kind=${kind} updated=${updated}/${pairs.length}`)
 
-  return NextResponse.json({ updated, total: sectors.length, results })
+  return NextResponse.json({ updated, total: pairs.length, results })
 }

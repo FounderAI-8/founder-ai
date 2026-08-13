@@ -33,7 +33,7 @@ export default function ProfilePage() {
   const [form, setFormState] = useState<any>({
     track: '',
     what_building: '', customer: '', stage: '', problem: '',
-    country: '', target_market: [] as string[], sector: '', business_model: '', product_type: '',
+    country: '', target_market: [] as string[], sector: '', business_description: '', city: '', business_model: '', product_type: '',
     budget: '', time_available: '', team_size: '', audience_size: '', investor_access: '',
     background: '', first_business: '', failed_before: '', biggest_mistake: '',
     end_goal: '', biggest_fear: '', revenue_timeline: '',
@@ -57,6 +57,8 @@ export default function ProfilePage() {
         country:          profile.country        ?? '',
         target_market:    profile.target_market  ?? [],
         sector:           profile.sector         ?? '',
+        business_description: profile.business_description ?? '',
+        city:             profile.city           ?? '',
         business_model:   profile.model          ?? '',
         product_type:     profile.product_type   ?? '',
         budget:           profile.budget         ?? '',
@@ -124,6 +126,8 @@ export default function ProfilePage() {
       country:        form.country,
       target_market:  form.target_market,
       sector:         form.sector,
+      business_description: form.business_description,
+      city:           form.city,
       model:          form.business_model,
       product_type:   form.product_type,
       budget:         form.budget,
@@ -249,6 +253,18 @@ export default function ProfilePage() {
             <Pill key={v} field="sector" value={v} />
           ))}
         </div>
+
+        <Label text="Descrivi in una frase la tua attività specifica" sub='Es. "Bar con proiezione eventi sportivi" o "Parrucchiere donna specializzato in colore"' />
+        <Textarea value={form.business_description} onChange={(e: any) => setField('business_description', e.target.value)} placeholder="La mia attività è..." />
+
+        <Label text="In quale città operi principalmente?" />
+        <input
+          type="text"
+          value={form.city}
+          onChange={(e: any) => setField('city', e.target.value)}
+          placeholder="es. Milano, Napoli, Bologna..."
+          style={{ width: '100%', background: '#0f1229', border: '1px solid #1e2340', borderRadius: 8, color: 'white', padding: '12px', fontSize: 14, outline: 'none', boxSizing: 'border-box' as const, marginTop: 8 }}
+        />
 
         <Label text="B2B o B2C?" />
         <div style={{ marginTop: 8 }}>

@@ -19,10 +19,14 @@ const CACHE_TTL_MS: Record<string, number> = {
   trends: 7 * 24 * 60 * 60 * 1000,
 }
 
-async function getFromCache(sector: string, kind: string): Promise<unknown[] | null> {
+function buildCacheKey(sector: string, city?: string): string {
+  return city ? `${sector}|${city}` : sector
+}
+
+async function getFromCache(cacheKey: string, kind: string): Promise<unknown[] | null> {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/sector_content_cache?sector=eq.${encodeURIComponent(sector)}&kind=eq.${encodeURIComponent(kind)}&select=items,updated_at`,
+      `${SUPABASE_URL}/rest/v1/sector_content_cache?sector=eq.${encodeURIComponent(cacheKey)}&kind=eq.${encodeURIComponent(kind)}&select=items,updated_at`,
       { headers: sbHeaders }
     )
     if (!res.ok) return null
@@ -37,34 +41,39 @@ async function getFromCache(sector: string, kind: string): Promise<unknown[] | n
   }
 }
 
-async function saveToCache(sector: string, kind: string, items: unknown[]) {
+async function saveToCache(cacheKey: string, kind: string, items: unknown[]) {
   try {
     await fetch(`${SUPABASE_URL}/rest/v1/sector_content_cache`, {
       method: 'POST',
       headers: { ...sbHeaders, Prefer: 'resolution=merge-duplicates' },
-      body: JSON.stringify({ sector, kind, items, updated_at: new Date().toISOString() }),
+      body: JSON.stringify({ sector: cacheKey, kind, items, updated_at: new Date().toISOString() }),
     })
   } catch (err) {
-    console.error(`[social/insights] saveToCache failed sector=${sector} kind=${kind}:`, err instanceof Error ? err.message : err)
+    console.error(`[social/insights] saveToCache failed cacheKey=${cacheKey} kind=${kind}:`, err instanceof Error ? err.message : err)
   }
 }
 
-const USER_PROMPTS: Record<string, (sector: string) => string> = {
-  dates: (sector) =>
-    `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector} in Italia — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. I campi why_relevant e suggestion devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`,
-  trends: (sector) =>
-    `Identifica 6-8 trend di contenuto attuali su Instagram, TikTok e YouTube, riadattati per un'attività nel settore ${sector}. Per ciascuno: piattaforma, in cosa consiste il trend, come un'attività di questo settore potrebbe usarlo concretamente. I campi description e how_to_use devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi platform, trend_title, description, how_to_use.`,
+const USER_PROMPTS: Record<string, (sector: string, city?: string, businessDescription?: string) => string> = {
+  dates: (sector, city, businessDescription) => {
+    const businessCtx = businessDescription ? ` (${businessDescription})` : ''
+    const cityCtx = city ? `, in particolare nella zona di ${city} se rilevante` : ''
+    return `Identifica le 8-10 date/eventi più rilevanti nei prossimi 3 mesi per un'attività nel settore ${sector}${businessCtx} in Italia${cityCtx} — sia ricorrenze fisse (festività, giornate mondiali, eventi commerciali come Black Friday) sia eventi variabili che richiedono una ricerca aggiornata (eventi sportivi, culturali, di attualità) SE rilevanti per questo tipo di business specifico. Per ciascuna data fornisci: la data esatta, cosa succede, perché conta per questo settore, un suggerimento pratico concreto. I campi why_relevant e suggestion devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi date, title, why_relevant, suggestion.`
+  },
+  trends: (sector, _city, businessDescription) => {
+    const businessCtx = businessDescription ? ` (${businessDescription})` : ''
+    return `Identifica 6-8 trend di contenuto attuali su Instagram, TikTok e YouTube, riadattati per un'attività nel settore ${sector}${businessCtx}. Per ciascuno: piattaforma, in cosa consiste il trend, come un'attività di questo settore potrebbe usarlo concretamente. I campi description e how_to_use devono essere massimo una frase breve ciascuno (15-20 parole). Rispondi in formato JSON: un array di oggetti con i campi platform, trend_title, description, how_to_use.`
+  },
 }
 
 const SYSTEM_PROMPT =
   'Sei un esperto di marketing e social media in Italia. Usa il web_search tool per cercare informazioni aggiornate. Rispondi sempre e solo con JSON valido (array), senza markdown, senza backtick, senza preamboli o spiegazioni.'
 
-async function generateContent(sector: string, kind: string): Promise<unknown[]> {
+async function generateContent(sector: string, kind: string, city?: string, businessDescription?: string): Promise<unknown[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const webSearchTool: any = { type: 'web_search_20250305', name: 'web_search' }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const messages: any[] = [{ role: 'user', content: USER_PROMPTS[kind](sector) }]
+  const messages: any[] = [{ role: 'user', content: USER_PROMPTS[kind](sector, city, businessDescription) }]
 
   let responseText = ''
 
@@ -147,9 +156,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid kind — use "dates" or "trends"' }, { status: 400 })
   }
 
-  // Sector from founder profile, not from client
+  // Sector, city, business_description from founder profile — never trusted from client
   const profileRes = await fetch(
-    `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${user.id}&select=sector`,
+    `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${user.id}&select=sector,business_description,city`,
     { headers: sbHeaders }
   )
   const profiles = await profileRes.json()
@@ -157,15 +166,18 @@ export async function GET(req: NextRequest) {
   if (!sector) {
     return NextResponse.json({ error: 'Sector not set in founder profile' }, { status: 400 })
   }
+  const city: string | undefined = profiles?.[0]?.city || undefined
+  const businessDescription: string | undefined = profiles?.[0]?.business_description || undefined
 
-  const cached = await getFromCache(sector, kind)
+  const cacheKey = buildCacheKey(sector, city)
+  const cached = await getFromCache(cacheKey, kind)
   if (cached) {
     return NextResponse.json({ items: cached, fromCache: true })
   }
 
-  const items = await generateContent(sector, kind)
+  const items = await generateContent(sector, kind, city, businessDescription)
   if (items.length > 0) {
-    await saveToCache(sector, kind, items)
+    await saveToCache(cacheKey, kind, items)
   }
 
   return NextResponse.json({ items, fromCache: false })
