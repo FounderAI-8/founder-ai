@@ -276,7 +276,8 @@ export default function ComposePage() {
 
             {/* Image generation */}
             <div className="mb-5">
-              <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">Immagine (opzionale)</p>
+              <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">Immagine (consigliata — Instagram, TikTok e YouTube richiedono un media per pubblicare)</p>
+              <p className="text-sm text-yellow-400 mb-3">L&apos;AI genera immagini di alta qualità ma non è affidabile nello scrivere testo al loro interno (errori di ortografia/battitura frequenti). Per i risultati migliori, genera l&apos;immagine senza chiedere scritte, e aggiungi eventuale testo con altri strumenti prima di pubblicare.</p>
               {imageUrl ? (
                 <div>
                   <img src={imageUrl} alt="Immagine generata" className="w-full rounded-xl mb-3" />

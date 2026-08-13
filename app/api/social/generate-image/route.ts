@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     const response: any = await openai.images.generate({
       model: 'gpt-image-1-mini' as any,
       quality: 'low' as any,
-      prompt: prompt.trim(),
+      prompt: `${prompt.trim()}. Non includere testo, scritte o frasi nell'immagine — se proprio necessario, al massimo una singola parola breve. Concentrati su elementi visivi, colori, composizione.`,
     })
     b64 = response.data[0].b64_json as string
   } catch (err) {
