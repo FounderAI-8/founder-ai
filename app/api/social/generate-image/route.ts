@@ -26,9 +26,9 @@ export async function POST(req: NextRequest) {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const response: any = await openai.images.generate({
-      model: 'gpt-image-1-mini' as any,
-      quality: 'low' as any,
-      prompt: `${prompt.trim()}. Non includere testo, scritte o frasi nell'immagine — se proprio necessario, al massimo una singola parola breve. Concentrati su elementi visivi, colori, composizione.`,
+      model: 'gpt-image-2',
+      quality: 'medium',
+      prompt: `${prompt.trim()}. Se necessario del testo nell'immagine, mantienilo breve (max 3-5 parole, es. un titolo o una singola parola) — evita frasi lunghe o paragrafi, che restano poco affidabili anche con i modelli più recenti.`,
     })
     b64 = response.data[0].b64_json as string
   } catch (err) {
