@@ -27,6 +27,8 @@ export default function ComposePage() {
   const [imageGenerating, setImageGenerating] = useState(false)
   const [imageCorrection, setImageCorrection] = useState('')
   const [correctionHistory, setCorrectionHistory] = useState<string[]>([])
+  const [imageDescription, setImageDescription] = useState('')
+  const [suggestingDescription, setSuggestingDescription] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -83,15 +85,10 @@ export default function ComposePage() {
     setErrorMsg(null)
     try {
       const { data: { session } } = await supabase.auth.getSession()
-      const selectedPlatforms = connections
-        .filter(c => selectedIds.includes(c.id))
-        .map(c => c.platform)
-        .join(', ')
-      const prompt = `Immagine per un post social: ${brief.trim()}, stile professionale, adatto a ${selectedPlatforms}`
       const res = await fetch('/api/social/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ description: imageDescription, brief: brief.trim() }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -115,11 +112,12 @@ export default function ComposePage() {
       const { data: { session } } = await supabase.auth.getSession()
       const newHistory = [...correctionHistory, imageCorrection.trim()]
       const corrections = newHistory.map((c, i) => `${i + 1}) ${c}`).join(' ')
-      const prompt = `Immagine per: ${brief.trim()}. Modifiche richieste in ordine: ${corrections}`
+      const base = imageDescription.trim() || `Immagine per il post riguardante: ${brief.trim()}`
+      const description = `${base}. Modifiche richieste in ordine: ${corrections}`
       const res = await fetch('/api/social/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ description, brief: brief.trim() }),
       })
       const data = await res.json()
       if (res.ok) {
@@ -133,6 +131,29 @@ export default function ComposePage() {
       setErrorMsg('Generazione immagine non riuscita. Riprova.')
     } finally {
       setImageGenerating(false)
+    }
+  }
+
+  const handleSuggestDescription = async () => {
+    setSuggestingDescription(true)
+    setErrorMsg(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/social/suggest-image-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ brief: brief.trim(), postText: generatedContent }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setImageDescription(data.description)
+      } else {
+        setErrorMsg('Suggerimento non riuscito. Riprova.')
+      }
+    } catch {
+      setErrorMsg('Suggerimento non riuscito. Riprova.')
+    } finally {
+      setSuggestingDescription(false)
     }
   }
 
@@ -173,6 +194,7 @@ export default function ComposePage() {
         setScheduledFor('')
         setImageUrl(null)
         setCorrectionHistory([])
+        setImageDescription('')
       } else {
         setErrorMsg(data.error ?? 'Pubblicazione non riuscita. Riprova.')
       }
@@ -305,13 +327,36 @@ export default function ComposePage() {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={handleGenerateImage}
-                  disabled={imageGenerating}
-                  className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {imageGenerating ? 'Generazione immagine…' : 'Genera immagine'}
-                </button>
+                <div>
+                  <div className="mb-3">
+                    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                      Descrizione immagine (opzionale)
+                    </label>
+                    <div className="flex gap-2 items-start">
+                      <textarea
+                        value={imageDescription}
+                        onChange={e => setImageDescription(e.target.value)}
+                        placeholder="Lascia vuoto per generazione automatica, oppure descrivi tu cosa vuoi vedere nell'immagine"
+                        rows={2}
+                        className="flex-1 bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#3B5BDB] resize-none"
+                      />
+                      <button
+                        onClick={handleSuggestDescription}
+                        disabled={suggestingDescription || !brief.trim()}
+                        className="bg-[#1e2340] border border-[#534AB7] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {suggestingDescription ? 'Suggerimento…' : 'Suggerisci'}
+                      </button>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenerateImage}
+                    disabled={imageGenerating}
+                    className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    {imageGenerating ? 'Generazione immagine…' : 'Genera immagine'}
+                  </button>
+                </div>
               )}
             </div>
 
