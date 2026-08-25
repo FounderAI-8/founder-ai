@@ -3,7 +3,10 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { supabase } from '@/lib/supabase'
+
+const DesignEditor = dynamic(() => import('./DesignEditor'), { ssr: false })
 
 interface SocialConnection {
   id: string
@@ -29,6 +32,7 @@ export default function ComposePage() {
   const [correctionHistory, setCorrectionHistory] = useState<string[]>([])
   const [imageDescription, setImageDescription] = useState('')
   const [suggestingDescription, setSuggestingDescription] = useState(false)
+  const [editorOpen, setEditorOpen] = useState(false)
   const router = useRouter()
 
   useEffect(() => {
@@ -319,12 +323,20 @@ export default function ComposePage() {
                       {imageGenerating ? 'Generazione…' : 'Rigenera'}
                     </button>
                   </div>
-                  <button
-                    onClick={() => { setImageUrl(null); setCorrectionHistory([]) }}
-                    className="text-sm text-gray-500 hover:text-red-400 transition-colors"
-                  >
-                    Rimuovi immagine
-                  </button>
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => setEditorOpen(true)}
+                      className="bg-[#1e2340] border border-[#534AB7] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-[#2a3060] transition-colors"
+                    >
+                      Modifica design
+                    </button>
+                    <button
+                      onClick={() => { setImageUrl(null); setCorrectionHistory([]) }}
+                      className="text-sm text-gray-500 hover:text-red-400 transition-colors"
+                    >
+                      Rimuovi immagine
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -411,6 +423,18 @@ export default function ComposePage() {
           </div>
         )}
       </main>
+
+      {editorOpen && imageUrl && (
+        <DesignEditor
+          imageUrl={imageUrl}
+          onSave={(newUrl) => {
+            setImageUrl(newUrl)
+            setCorrectionHistory([])
+            setEditorOpen(false)
+          }}
+          onClose={() => setEditorOpen(false)}
+        />
+      )}
     </div>
   )
 }
