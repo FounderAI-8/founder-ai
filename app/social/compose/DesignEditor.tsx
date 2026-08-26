@@ -2,9 +2,14 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Canvas, IText, Textbox, FabricImage, Rect, Circle, Line } from 'fabric'
+import { supabase } from '@/lib/supabase'
 
 type ShapeObject = Rect | Circle | Line
-import { supabase } from '@/lib/supabase'
+
+const SNAP_THRESHOLD = 6 // pixel schermo entro cui scatta l'allineamento durante il drag
+const ZOOM_MIN = 0.25
+const ZOOM_MAX = 3
+const ZOOM_STEP = 0.25
 
 const GOOGLE_FONTS_URL =
   'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Playfair+Display:wght@400;700&family=Inter:wght@400;700&family=Pacifico&family=Raleway:wght@400;700&display=block'
@@ -40,6 +45,12 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const logoInputRef = useRef<HTMLInputElement | null>(null)
   const baseImageRef = useRef<FabricImage | null>(null)
   const originalDimsRef = useRef<{ w: number; h: number } | null>(null)
+  // Dimensioni canvas a zoom=1 (base). Servono per zoom (canvas DOM = base * zoom) e
+  // per posizionare correttamente nuovi oggetti al centro world anche a zoom != 1.
+  const baseSizeRef = useRef<{ w: number; h: number } | null>(null)
+  // Guide di allineamento correnti (in coordinate viewport = pixel DOM canvas).
+  // Ref invece che state per non re-renderare React su ogni frame di drag.
+  const guidesRef = useRef<{ x: number[]; y: number[] }>({ x: [], y: [] })
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -48,6 +59,7 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const [selectedText, setSelectedText] = useState<IText | null>(null)
   const [selectedShape, setSelectedShape] = useState<ShapeObject | null>(null)
   const [selectionNonce, setSelectionNonce] = useState(0)
+  const [zoom, setZoom] = useState(1)
 
   // Inject Google Fonts so they're available both for display and canvas rasterization
   useEffect(() => {
@@ -93,6 +105,95 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     canvas.on('selection:updated', syncSelection)
     canvas.on('selection:cleared', syncSelection)
 
+    // --- Snapping: guide di allineamento durante il drag ---
+    canvas.on('object:moving', (e) => {
+      const obj = e.target
+      if (!obj) return
+      const z = canvas.getZoom()
+      const cw = canvas.getWidth()
+      const ch = canvas.getHeight()
+      const r = obj.getBoundingRect()
+      const objXs = [r.left, r.left + r.width / 2, r.left + r.width]
+      const objYs = [r.top, r.top + r.height / 2, r.top + r.height]
+
+      const xTargets: number[] = [0, cw / 2, cw]
+      const yTargets: number[] = [0, ch / 2, ch]
+      canvas.getObjects().forEach((o) => {
+        if (o === obj) return
+        if ((o as unknown as { excludeFromUnsaved?: boolean }).excludeFromUnsaved) return
+        const or = o.getBoundingRect()
+        xTargets.push(or.left, or.left + or.width / 2, or.left + or.width)
+        yTargets.push(or.top, or.top + or.height / 2, or.top + or.height)
+      })
+
+      let bestDx = 0
+      let snappedX: number | null = null
+      for (const x of objXs) {
+        for (const t of xTargets) {
+          const d = t - x
+          if (Math.abs(d) < SNAP_THRESHOLD && (snappedX === null || Math.abs(d) < Math.abs(bestDx))) {
+            bestDx = d
+            snappedX = t
+          }
+        }
+      }
+      let bestDy = 0
+      let snappedY: number | null = null
+      for (const y of objYs) {
+        for (const t of yTargets) {
+          const d = t - y
+          if (Math.abs(d) < SNAP_THRESHOLD && (snappedY === null || Math.abs(d) < Math.abs(bestDy))) {
+            bestDy = d
+            snappedY = t
+          }
+        }
+      }
+
+      // delta è in coord viewport (pixel schermo); obj.left è in world → dividi per zoom
+      if (bestDx !== 0) obj.set({ left: (obj.left ?? 0) + bestDx / z })
+      if (bestDy !== 0) obj.set({ top: (obj.top ?? 0) + bestDy / z })
+      obj.setCoords()
+
+      guidesRef.current = {
+        x: snappedX !== null ? [snappedX] : [],
+        y: snappedY !== null ? [snappedY] : [],
+      }
+    })
+
+    canvas.on('mouse:up', () => {
+      if (guidesRef.current.x.length || guidesRef.current.y.length) {
+        guidesRef.current = { x: [], y: [] }
+        canvas.requestRenderAll()
+      }
+    })
+
+    // Disegna le guide su contextContainer dopo ogni render. In save() le guide sono
+    // già state ripulite (mouse:up) quindi toDataURL non le include.
+    canvas.on('after:render', () => {
+      const { x, y } = guidesRef.current
+      if (x.length === 0 && y.length === 0) return
+      const ctx = canvas.contextContainer
+      const w = canvas.getWidth()
+      const h = canvas.getHeight()
+      ctx.save()
+      ctx.strokeStyle = '#3B5BDB'
+      ctx.lineWidth = 1
+      ctx.setLineDash([4, 4])
+      x.forEach((xi) => {
+        ctx.beginPath()
+        ctx.moveTo(xi + 0.5, 0)
+        ctx.lineTo(xi + 0.5, h)
+        ctx.stroke()
+      })
+      y.forEach((yi) => {
+        ctx.beginPath()
+        ctx.moveTo(0, yi + 0.5)
+        ctx.lineTo(w, yi + 0.5)
+        ctx.stroke()
+      })
+      ctx.restore()
+    })
+
     ;(async () => {
       try {
         // Cache-buster: la stessa URL è già stata scaricata dal preview <img> senza
@@ -111,6 +212,7 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         const canvasH = Math.round(natH * scale)
 
         canvas.setDimensions({ width: canvasW, height: canvasH })
+        baseSizeRef.current = { w: canvasW, h: canvasH }
         img.set({
           left: canvasW / 2,
           top: canvasH / 2,
@@ -141,6 +243,8 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       fabricRef.current = null
       baseImageRef.current = null
       originalDimsRef.current = null
+      baseSizeRef.current = null
+      guidesRef.current = { x: [], y: [] }
     }
   }, [imageUrl])
 
@@ -199,23 +303,46 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     const newCanvasW = Math.round(cropW * newScale)
     const newCanvasH = Math.round(cropH * newScale)
 
+    // Cambio di formato resetta lo zoom: le nuove dimensioni sono la nuova base.
+    canvas.setZoom(1)
+    setZoom(1)
     canvas.setDimensions({ width: newCanvasW, height: newCanvasH })
+    baseSizeRef.current = { w: newCanvasW, h: newCanvasH }
     img.set({ cropX, cropY, width: cropW, height: cropH, scaleX: newScale, scaleY: newScale, left: newCanvasW / 2, top: newCanvasH / 2 })
     img.setCoords()
     canvas.requestRenderAll()
     setHasUnsavedChanges(true)
   }
 
+  // Zoom: canvas DOM dimensionato a base * zoom, viewport transform (setZoom) applica
+  // la stessa scala al world → gli oggetti restano "attaccati" allo stesso punto world
+  // ma visualmente crescono/decrescono. Il container overflow-auto gestisce lo scroll.
+  const applyZoom = (nextZoom: number) => {
+    const canvas = fabricRef.current
+    const base = baseSizeRef.current
+    if (!canvas || !base) return
+    const z = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, nextZoom))
+    canvas.setZoom(z)
+    canvas.setDimensions({ width: Math.round(base.w * z), height: Math.round(base.h * z) })
+    canvas.requestRenderAll()
+    setZoom(z)
+  }
+
+  // Le posizioni degli oggetti sono in world coords: usiamo baseSize (dimensioni a zoom=1)
+  // per il centering, così un oggetto aggiunto mentre lo zoom è != 1 nasce comunque al centro.
+  const baseSize = () => baseSizeRef.current ?? { w: fabricRef.current!.getWidth(), h: fabricRef.current!.getHeight() }
+
   const handleAddText = () => {
     const canvas = fabricRef.current
     if (!canvas) return
+    const { w, h } = baseSize()
     // Textbox (non IText) con larghezza fissa: senza una width prestabilita la scatola
     // si adatta al contenuto e textAlign non produce un effetto visibile su singola riga.
     // L'utente può poi ridimensionare la larghezza dalle maniglie laterali.
     const text = new Textbox('Testo', {
-      left: canvas.getWidth() / 2,
-      top: canvas.getHeight() / 2,
-      width: Math.round(canvas.getWidth() * 0.6),
+      left: w / 2,
+      top: h / 2,
+      width: Math.round(w * 0.6),
       fontSize: 40,
       fill: '#ffffff',
       fontFamily: 'Montserrat',
@@ -238,8 +365,7 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     const objectUrl = URL.createObjectURL(file)
     try {
       const logo = await FabricImage.fromURL(objectUrl)
-      const canvasW = canvas.getWidth()
-      const canvasH = canvas.getHeight()
+      const { w: canvasW, h: canvasH } = baseSize()
       const targetSide = Math.min(canvasW, canvasH) * 0.3
       const natW = logo.width || targetSide
       const natH = logo.height || targetSide
@@ -279,9 +405,10 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const handleAddRect = () => {
     const canvas = fabricRef.current
     if (!canvas) return
+    const { w, h } = baseSize()
     const rect = new Rect({
-      left: canvas.getWidth() / 2,
-      top: canvas.getHeight() / 2,
+      left: w / 2,
+      top: h / 2,
       width: 200,
       height: 120,
       fill: '#534AB7',
@@ -296,9 +423,10 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const handleAddCircle = () => {
     const canvas = fabricRef.current
     if (!canvas) return
+    const { w, h } = baseSize()
     const circle = new Circle({
-      left: canvas.getWidth() / 2,
-      top: canvas.getHeight() / 2,
+      left: w / 2,
+      top: h / 2,
       radius: 60,
       fill: '#534AB7',
       stroke: '#ffffff',
@@ -312,8 +440,9 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const handleAddLine = () => {
     const canvas = fabricRef.current
     if (!canvas) return
-    const cx = canvas.getWidth() / 2
-    const cy = canvas.getHeight() / 2
+    const { w, h } = baseSize()
+    const cx = w / 2
+    const cy = h / 2
     const line = new Line([cx - 100, cy, cx + 100, cy], {
       stroke: '#ffffff',
       strokeWidth: 4,
@@ -352,6 +481,16 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     if (!canvas) return
     setSaving(true)
     setErrorMsg(null)
+
+    // toDataURL cattura il canvas DOM così com'è: se lo zoom è != 1, il PNG risulta
+    // scalato. Resetta temporaneamente a zoom=1 per l'export, poi ripristina.
+    const savedZoom = canvas.getZoom()
+    const base = baseSizeRef.current
+    if (base && savedZoom !== 1) {
+      canvas.setZoom(1)
+      canvas.setDimensions({ width: base.w, height: base.h })
+    }
+
     try {
       canvas.discardActiveObject()
       canvas.requestRenderAll()
@@ -378,6 +517,11 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       console.error('[DesignEditor] save failed:', err)
       setErrorMsg('Salvataggio non riuscito. Riprova.')
     } finally {
+      if (base && savedZoom !== 1) {
+        canvas.setZoom(savedZoom)
+        canvas.setDimensions({ width: Math.round(base.w * savedZoom), height: Math.round(base.h * savedZoom) })
+        canvas.requestRenderAll()
+      }
       setSaving(false)
     }
   }
@@ -561,9 +705,39 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         </div>
       )}
 
-      <div className="flex-1 overflow-auto flex items-center justify-center p-6 relative">
-        {loading && <p className="absolute text-gray-400 text-sm">Caricamento immagine…</p>}
-        <canvas ref={canvasElRef} className="shadow-2xl rounded" />
+      <div className="flex-1 relative overflow-hidden">
+        {/* Scroll container: quando lo zoom fa crescere il canvas oltre il viewport,
+            l'utente può panare con le scroll bar. */}
+        <div className="absolute inset-0 overflow-auto flex items-center justify-center p-6">
+          {loading && <p className="absolute text-gray-400 text-sm">Caricamento immagine…</p>}
+          <canvas ref={canvasElRef} className="shadow-2xl rounded" />
+        </div>
+
+        {/* Zoom controls flottanti — restano visibili anche quando l'utente scrolla il canvas */}
+        {!loading && (
+          <div className="absolute bottom-6 right-6 flex items-center gap-1 bg-[#0a0c1a] border border-[#1e2340] rounded-lg px-2 py-1 shadow-lg z-10">
+            <button
+              onClick={() => applyZoom(zoom - ZOOM_STEP)}
+              disabled={zoom <= ZOOM_MIN}
+              title="Riduci zoom"
+              className="w-7 h-7 rounded text-white text-sm hover:bg-[#1e2340] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              −
+            </button>
+            <button
+              onClick={() => applyZoom(1)}
+              title="Zoom 100%"
+              className="min-w-[3.5rem] px-2 h-7 rounded text-white text-xs hover:bg-[#1e2340] transition-colors">
+              {Math.round(zoom * 100)}%
+            </button>
+            <button
+              onClick={() => applyZoom(zoom + ZOOM_STEP)}
+              disabled={zoom >= ZOOM_MAX}
+              title="Aumenta zoom"
+              className="w-7 h-7 rounded text-white text-sm hover:bg-[#1e2340] disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              +
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
