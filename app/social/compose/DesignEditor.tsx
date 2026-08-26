@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Canvas, IText, Textbox, FabricImage } from 'fabric'
+import { Canvas, IText, Textbox, FabricImage, Rect, Circle, Line } from 'fabric'
+
+type ShapeObject = Rect | Circle | Line
 import { supabase } from '@/lib/supabase'
 
 const GOOGLE_FONTS_URL =
@@ -44,6 +46,7 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [selectedText, setSelectedText] = useState<IText | null>(null)
+  const [selectedShape, setSelectedShape] = useState<ShapeObject | null>(null)
   const [selectionNonce, setSelectionNonce] = useState(0)
 
   // Inject Google Fonts so they're available both for display and canvas rasterization
@@ -79,6 +82,11 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     const syncSelection = () => {
       const active = canvas.getActiveObject()
       setSelectedText(active instanceof IText ? active : null)
+      setSelectedShape(
+        active instanceof Rect || active instanceof Circle || active instanceof Line
+          ? (active as ShapeObject)
+          : null,
+      )
       setSelectionNonce((n) => n + 1)
     }
     canvas.on('selection:created', syncSelection)
@@ -156,6 +164,12 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const isItalic     = (selectedText?.fontStyle as string) === 'italic'
   const isUnderline  = (selectedText?.underline as boolean) ?? false
   const hasTextBg    = !!((selectedText?.backgroundColor as string) ?? '')
+
+  // Derived from selected shape
+  const isLine           = selectedShape instanceof Line
+  const shapeFill        = (selectedShape?.fill as string)   ?? '#534AB7'
+  const shapeStroke      = (selectedShape?.stroke as string) ?? '#ffffff'
+  const shapeStrokeWidth = Math.round((selectedShape?.strokeWidth as number) ?? 2)
   void selectionNonce
 
   // --- Handlers ---
@@ -260,6 +274,68 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const handleTextUnderline = ()           => mutateText(t => t.set({ underline:  !isUnderline }))
   const handleTextBackground = ()          => mutateText(t => t.set({ backgroundColor: hasTextBg ? '' : 'rgba(0,0,0,0.55)' }))
 
+  // --- Shape creation ---
+
+  const handleAddRect = () => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const rect = new Rect({
+      left: canvas.getWidth() / 2,
+      top: canvas.getHeight() / 2,
+      width: 200,
+      height: 120,
+      fill: '#534AB7',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+    })
+    canvas.add(rect)
+    canvas.setActiveObject(rect)
+    canvas.requestRenderAll()
+  }
+
+  const handleAddCircle = () => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const circle = new Circle({
+      left: canvas.getWidth() / 2,
+      top: canvas.getHeight() / 2,
+      radius: 60,
+      fill: '#534AB7',
+      stroke: '#ffffff',
+      strokeWidth: 2,
+    })
+    canvas.add(circle)
+    canvas.setActiveObject(circle)
+    canvas.requestRenderAll()
+  }
+
+  const handleAddLine = () => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    const cx = canvas.getWidth() / 2
+    const cy = canvas.getHeight() / 2
+    const line = new Line([cx - 100, cy, cx + 100, cy], {
+      stroke: '#ffffff',
+      strokeWidth: 4,
+    })
+    canvas.add(line)
+    canvas.setActiveObject(line)
+    canvas.requestRenderAll()
+  }
+
+  // Generic shape mutator — same pattern as mutateText
+  const mutateShape = (fn: (s: ShapeObject) => void) => {
+    if (!fabricRef.current || !selectedShape) return
+    fn(selectedShape)
+    fabricRef.current.requestRenderAll()
+    setHasUnsavedChanges(true)
+    setSelectionNonce((n) => n + 1)
+  }
+
+  const handleShapeFill        = (v: string) => mutateShape(s => s.set({ fill: v }))
+  const handleShapeStroke      = (v: string) => mutateShape(s => s.set({ stroke: v }))
+  const handleShapeStrokeWidth = (v: number) => mutateShape(s => s.set({ strokeWidth: Math.max(0, v || 0) }))
+
   const handleDeleteSelected = () => {
     const canvas = fabricRef.current
     if (!canvas) return
@@ -334,6 +410,20 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
           + Logo
         </button>
         <input ref={logoInputRef} type="file" accept="image/*" onChange={handleLogoFile} className="hidden" />
+
+        <span className="w-px h-6 bg-[#1e2340] mx-1" />
+        <button onClick={handleAddRect} disabled={loading}
+          className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          + Rettangolo
+        </button>
+        <button onClick={handleAddCircle} disabled={loading}
+          className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          + Cerchio
+        </button>
+        <button onClick={handleAddLine} disabled={loading}
+          className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          + Linea
+        </button>
 
         <span className="w-px h-6 bg-[#1e2340] mx-1" />
         <span className="text-xs text-gray-400">Formato:</span>
@@ -421,6 +511,41 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
             }`}>
             Sfondo
           </button>
+
+          <div className="flex-1" />
+
+          <button onClick={handleDeleteSelected} className="text-xs text-red-400 hover:text-red-300 transition-colors">
+            Elimina
+          </button>
+        </div>
+      )}
+
+      {/* Shape formatting toolbar — appears when a Rect/Circle/Line is selected */}
+      {selectedShape && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-[#1e2340] bg-[#0f1229] px-6 py-2.5">
+          {/* Fill color (nascosto per Line — non ha riempimento significativo) */}
+          {!isLine && (
+            <label className="text-xs text-gray-400 flex items-center gap-1">
+              Riempimento
+              <input type="color" value={shapeFill} onChange={e => handleShapeFill(e.target.value)}
+                className="w-8 h-7 bg-transparent border border-[#1e2340] rounded cursor-pointer" />
+            </label>
+          )}
+
+          {/* Stroke color */}
+          <label className="text-xs text-gray-400 flex items-center gap-1">
+            Bordo
+            <input type="color" value={shapeStroke} onChange={e => handleShapeStroke(e.target.value)}
+              className="w-8 h-7 bg-transparent border border-[#1e2340] rounded cursor-pointer" />
+          </label>
+
+          {/* Stroke width */}
+          <label className="text-xs text-gray-400 flex items-center gap-1">
+            Spessore
+            <input type="number" min={0} max={40} value={shapeStrokeWidth}
+              onChange={e => handleShapeStrokeWidth(Number(e.target.value))}
+              className="w-14 bg-[#0a0c1a] border border-[#1e2340] rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-[#3B5BDB]" />
+          </label>
 
           <div className="flex-1" />
 
