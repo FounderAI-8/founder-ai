@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
@@ -33,6 +33,9 @@ export default function ComposePage() {
   const [imageDescription, setImageDescription] = useState('')
   const [suggestingDescription, setSuggestingDescription] = useState(false)
   const [editorOpen, setEditorOpen] = useState(false)
+  const [imageSource, setImageSource] = useState<'ai' | 'upload'>('ai')
+  const [imageUploading, setImageUploading] = useState(false)
+  const uploadInputRef = useRef<HTMLInputElement | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -97,6 +100,7 @@ export default function ComposePage() {
       const data = await res.json()
       if (res.ok) {
         setImageUrl(data.imageUrl)
+        setImageSource('ai')
         setCorrectionHistory([])
       } else {
         setErrorMsg('Generazione immagine non riuscita. Riprova.')
@@ -105,6 +109,52 @@ export default function ComposePage() {
       setErrorMsg('Generazione immagine non riuscita. Riprova.')
     } finally {
       setImageGenerating(false)
+    }
+  }
+
+  const handleUploadImage = () => {
+    uploadInputRef.current?.click()
+  }
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setErrorMsg("Formato file non valido. Carica un'immagine (JPG, PNG, WebP, ecc.)")
+      return
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMsg('File troppo grande. Dimensione massima: 10 MB.')
+      return
+    }
+    setImageUploading(true)
+    setErrorMsg(null)
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result as string)
+        reader.onerror = () => reject(new Error('Errore lettura file'))
+        reader.readAsDataURL(file)
+      })
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/social/composite-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ imageBase64: dataUrl }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setImageUrl(data.imageUrl)
+        setImageSource('upload')
+        setCorrectionHistory([])
+      } else {
+        setErrorMsg(data.error ?? 'Caricamento immagine non riuscito. Riprova.')
+      }
+    } catch {
+      setErrorMsg('Caricamento immagine non riuscito. Riprova.')
+    } finally {
+      setImageUploading(false)
     }
   }
 
@@ -307,22 +357,24 @@ export default function ComposePage() {
               {imageUrl ? (
                 <div>
                   <img src={imageUrl} alt="Immagine generata" className="w-full rounded-xl mb-3" />
-                  <div className="flex gap-2 mb-3">
-                    <input
-                      type="text"
-                      value={imageCorrection}
-                      onChange={e => setImageCorrection(e.target.value)}
-                      placeholder='Es. "rendila più luminosa" o "aggiungi più persone"'
-                      className="flex-1 bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#3B5BDB]"
-                    />
-                    <button
-                      onClick={handleRegenerateImage}
-                      disabled={imageGenerating || !imageCorrection.trim()}
-                      className="bg-[#1e2340] border border-[#534AB7] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
-                    >
-                      {imageGenerating ? 'Generazione…' : 'Rigenera'}
-                    </button>
-                  </div>
+                  {imageSource === 'ai' && (
+                    <div className="flex gap-2 mb-3">
+                      <input
+                        type="text"
+                        value={imageCorrection}
+                        onChange={e => setImageCorrection(e.target.value)}
+                        placeholder='Es. "rendila più luminosa" o "aggiungi più persone"'
+                        className="flex-1 bg-[#0a0c1a] border border-[#1e2340] rounded-xl px-4 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-[#3B5BDB]"
+                      />
+                      <button
+                        onClick={handleRegenerateImage}
+                        disabled={imageGenerating || !imageCorrection.trim()}
+                        className="bg-[#1e2340] border border-[#534AB7] text-white rounded-xl px-4 py-2 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+                      >
+                        {imageGenerating ? 'Generazione…' : 'Rigenera'}
+                      </button>
+                    </div>
+                  )}
                   <div className="flex items-center gap-4">
                     <button
                       onClick={() => setEditorOpen(true)}
@@ -331,7 +383,7 @@ export default function ComposePage() {
                       Modifica design
                     </button>
                     <button
-                      onClick={() => { setImageUrl(null); setCorrectionHistory([]) }}
+                      onClick={() => { setImageUrl(null); setCorrectionHistory([]); setImageSource('ai') }}
                       className="text-sm text-gray-500 hover:text-red-400 transition-colors"
                     >
                       Rimuovi immagine
@@ -361,13 +413,29 @@ export default function ComposePage() {
                       </button>
                     </div>
                   </div>
-                  <button
-                    onClick={handleGenerateImage}
-                    disabled={imageGenerating}
-                    className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {imageGenerating ? 'Generazione immagine…' : 'Genera immagine'}
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={handleGenerateImage}
+                      disabled={imageGenerating || imageUploading}
+                      className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {imageGenerating ? 'Generazione immagine…' : 'Genera immagine'}
+                    </button>
+                    <button
+                      onClick={handleUploadImage}
+                      disabled={imageGenerating || imageUploading}
+                      className="bg-[#0f1229] border border-[#1e2340] text-gray-300 rounded-xl px-5 py-2 text-sm font-medium hover:border-[#534AB7] hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {imageUploading ? 'Caricamento…' : 'Carica immagine'}
+                    </button>
+                    <input
+                      ref={uploadInputRef}
+                      type="file"
+                      accept="image/*"
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                  </div>
                 </div>
               )}
             </div>
