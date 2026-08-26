@@ -67,7 +67,11 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
 
     ;(async () => {
       try {
-        const img = await FabricImage.fromURL(imageUrl, { crossOrigin: 'anonymous' })
+        // Cache-buster: la stessa URL è già stata scaricata dal preview <img> senza
+        // crossorigin, quindi la risposta cachata potrebbe non avere l'header CORS —
+        // riusarla qui tainterebbe il canvas.
+        const cacheBustedUrl = `${imageUrl}${imageUrl.includes('?') ? '&' : '?'}_cb=${Date.now()}`
+        const img = await FabricImage.fromURL(cacheBustedUrl, { crossOrigin: 'anonymous' })
         if (cancelled) return
 
         const natW = img.width || MAX_CANVAS_SIDE
