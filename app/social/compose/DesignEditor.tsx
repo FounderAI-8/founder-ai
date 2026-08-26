@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Canvas, IText, FabricImage } from 'fabric'
+import { Canvas, IText, Textbox, FabricImage } from 'fabric'
 import { supabase } from '@/lib/supabase'
 
 const GOOGLE_FONTS_URL =
@@ -195,9 +195,13 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const handleAddText = () => {
     const canvas = fabricRef.current
     if (!canvas) return
-    const text = new IText('Testo', {
+    // Textbox (non IText) con larghezza fissa: senza una width prestabilita la scatola
+    // si adatta al contenuto e textAlign non produce un effetto visibile su singola riga.
+    // L'utente può poi ridimensionare la larghezza dalle maniglie laterali.
+    const text = new Textbox('Testo', {
       left: canvas.getWidth() / 2,
       top: canvas.getHeight() / 2,
+      width: Math.round(canvas.getWidth() * 0.6),
       fontSize: 40,
       fill: '#ffffff',
       fontFamily: 'Montserrat',
