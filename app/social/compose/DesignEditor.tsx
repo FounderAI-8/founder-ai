@@ -6,10 +6,22 @@ import { supabase } from '@/lib/supabase'
 
 type ShapeObject = Rect | Circle | Line
 
+type UnsplashPhoto = {
+  id: string
+  urlRegular: string
+  urlSmall: string
+  photographerName: string
+  photographerUrl: string
+  downloadLocation: string
+}
+
 const SNAP_THRESHOLD = 6 // pixel schermo entro cui scatta l'allineamento durante il drag
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.25
+
+// Parametri UTM richiesti dalle linee guida ufficiali Unsplash per l'attribuzione.
+const UNSPLASH_UTM = '?utm_source=founderai&utm_medium=referral'
 
 const GOOGLE_FONTS_URL =
   'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&family=Playfair+Display:wght@400;700&family=Inter:wght@400;700&family=Pacifico&family=Raleway:wght@400;700&display=block'
@@ -60,6 +72,15 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const [selectedShape, setSelectedShape] = useState<ShapeObject | null>(null)
   const [selectionNonce, setSelectionNonce] = useState(0)
   const [zoom, setZoom] = useState(1)
+
+  // --- Unsplash stock photos ---
+  const [unsplashOpen, setUnsplashOpen] = useState(false)
+  const [unsplashQuery, setUnsplashQuery] = useState('')
+  const [unsplashResults, setUnsplashResults] = useState<UnsplashPhoto[]>([])
+  const [unsplashLoading, setUnsplashLoading] = useState(false)
+  const [unsplashError, setUnsplashError] = useState<string | null>(null)
+  // Credit accumulati per la sessione. Dedup per photographerUrl.
+  const [unsplashCredits, setUnsplashCredits] = useState<{ photographerName: string; photographerUrl: string }[]>([])
 
   // Inject Google Fonts so they're available both for display and canvas rasterization
   useEffect(() => {
@@ -452,6 +473,71 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     canvas.requestRenderAll()
   }
 
+  // --- Unsplash search + add ---
+
+  const handleUnsplashSearch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const q = unsplashQuery.trim()
+    if (!q) return
+    setUnsplashLoading(true)
+    setUnsplashError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch(`/api/social/unsplash?q=${encodeURIComponent(q)}`, {
+        headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setUnsplashError(data.error ?? 'Ricerca non riuscita')
+        setUnsplashResults([])
+        return
+      }
+      setUnsplashResults(Array.isArray(data.photos) ? data.photos : [])
+    } catch (err) {
+      console.error('[DesignEditor] unsplash search failed:', err)
+      setUnsplashError('Ricerca non riuscita')
+    } finally {
+      setUnsplashLoading(false)
+    }
+  }
+
+  const handleAddUnsplashPhoto = async (photo: UnsplashPhoto) => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+    try {
+      const img = await FabricImage.fromURL(photo.urlRegular, { crossOrigin: 'anonymous' })
+      const { w: canvasW, h: canvasH } = baseSize()
+      const targetSide = Math.min(canvasW, canvasH) * 0.5
+      const natW = img.width || targetSide
+      const natH = img.height || targetSide
+      const scale = Math.min(targetSide / natW, targetSide / natH)
+      img.set({ left: canvasW / 2, top: canvasH / 2, scaleX: scale, scaleY: scale })
+      canvas.add(img)
+      canvas.setActiveObject(img)
+      canvas.requestRenderAll()
+
+      // Accumula credit (dedup per URL fotografo)
+      setUnsplashCredits((prev) =>
+        prev.some((c) => c.photographerUrl === photo.photographerUrl)
+          ? prev
+          : [...prev, { photographerName: photo.photographerName, photographerUrl: photo.photographerUrl }],
+      )
+
+      // TOS Unsplash: trigger download tracking (fire-and-forget)
+      const { data: { session } } = await supabase.auth.getSession()
+      fetch('/api/social/unsplash/track-download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
+        body: JSON.stringify({ downloadLocation: photo.downloadLocation }),
+      }).catch((err) => console.error('[DesignEditor] track-download failed:', err))
+
+      setUnsplashOpen(false)
+    } catch (err) {
+      console.error('[DesignEditor] unsplash photo load failed:', err)
+      setUnsplashError('Impossibile caricare la foto.')
+    }
+  }
+
   // Generic shape mutator — same pattern as mutateText
   const mutateShape = (fn: (s: ShapeObject) => void) => {
     if (!fabricRef.current || !selectedShape) return
@@ -567,6 +653,12 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         <button onClick={handleAddLine} disabled={loading}
           className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
           + Linea
+        </button>
+
+        <span className="w-px h-6 bg-[#1e2340] mx-1" />
+        <button onClick={() => setUnsplashOpen(true)} disabled={loading}
+          className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          + Foto stock
         </button>
 
         <span className="w-px h-6 bg-[#1e2340] mx-1" />
@@ -713,6 +805,23 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
           <canvas ref={canvasElRef} className="shadow-2xl rounded" />
         </div>
 
+        {/* Attribuzione Unsplash (obbligatoria per TOS). Non finisce nell'export toDataURL:
+            è solo overlay HTML durante l'editing. */}
+        {unsplashCredits.length > 0 && (
+          <div className="absolute bottom-6 left-6 max-w-md bg-black/70 text-white text-[11px] px-2.5 py-1.5 rounded shadow-lg z-10">
+            {unsplashCredits.map((c, i) => (
+              <span key={c.photographerUrl}>
+                Photo by{' '}
+                <a href={`${c.photographerUrl}${UNSPLASH_UTM}`} target="_blank" rel="noopener noreferrer"
+                  className="underline hover:text-[#5C7CFA]">{c.photographerName}</a>
+                {i < unsplashCredits.length - 1 ? ', ' : ' '}
+              </span>
+            ))}
+            on <a href={`https://unsplash.com/${UNSPLASH_UTM}`} target="_blank" rel="noopener noreferrer"
+              className="underline hover:text-[#5C7CFA]">Unsplash</a>
+          </div>
+        )}
+
         {/* Zoom controls flottanti — restano visibili anche quando l'utente scrolla il canvas */}
         {!loading && (
           <div className="absolute bottom-6 right-6 flex items-center gap-1 bg-[#0a0c1a] border border-[#1e2340] rounded-lg px-2 py-1 shadow-lg z-10">
@@ -739,6 +848,74 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
           </div>
         )}
       </div>
+
+      {/* --- Modal ricerca foto stock Unsplash --- */}
+      {unsplashOpen && (
+        <div className="absolute inset-0 bg-black/80 z-40 flex items-center justify-center p-6"
+          onClick={(e) => { if (e.target === e.currentTarget) setUnsplashOpen(false) }}>
+          <div className="bg-[#0a0c1a] border border-[#1e2340] rounded-lg w-full max-w-4xl flex flex-col" style={{ maxHeight: '90%' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#1e2340] px-4 py-3">
+              <h3 className="text-white font-semibold text-sm">Foto stock (Unsplash)</h3>
+              <button onClick={() => setUnsplashOpen(false)} className="text-sm text-gray-400 hover:text-white transition-colors">
+                ✕ Chiudi
+              </button>
+            </div>
+
+            {/* Search form */}
+            <form onSubmit={handleUnsplashSearch} className="flex items-center gap-2 border-b border-[#1e2340] px-4 py-3">
+              <input
+                type="text"
+                autoFocus
+                value={unsplashQuery}
+                onChange={(e) => setUnsplashQuery(e.target.value)}
+                placeholder="Cerca (es. sunset, office, nature)…"
+                className="flex-1 bg-[#0f1229] border border-[#1e2340] rounded px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#3B5BDB]"
+              />
+              <button
+                type="submit"
+                disabled={unsplashLoading || !unsplashQuery.trim()}
+                className="bg-[#3B5BDB] text-white rounded-lg px-4 py-1.5 text-sm font-semibold hover:bg-[#5C7CFA] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                {unsplashLoading ? 'Ricerca…' : 'Cerca'}
+              </button>
+            </form>
+
+            {unsplashError && (
+              <div className="bg-red-950/40 border-b border-red-900 px-4 py-2 text-xs text-red-300">
+                {unsplashError}
+              </div>
+            )}
+
+            {/* Grid */}
+            <div className="flex-1 overflow-auto p-4">
+              {unsplashLoading && <p className="text-center text-gray-400 text-sm">Ricerca in corso…</p>}
+              {!unsplashLoading && unsplashResults.length === 0 && !unsplashError && (
+                <p className="text-center text-gray-500 text-sm">Cerca una parola chiave per vedere le foto.</p>
+              )}
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                {unsplashResults.map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => handleAddUnsplashPhoto(p)}
+                    title={`Aggiungi foto di ${p.photographerName}`}
+                    className="group relative aspect-square overflow-hidden rounded border border-transparent hover:border-[#534AB7] transition-colors">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={p.urlSmall} alt="" className="w-full h-full object-cover group-hover:opacity-80 transition-opacity" />
+                    <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/80 to-transparent px-1.5 py-1 text-[9px] text-white truncate">
+                      {p.photographerName}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer: legal note */}
+            <div className="border-t border-[#1e2340] px-4 py-2 text-[10px] text-gray-500">
+              Foto fornite da Unsplash. L'attribuzione al fotografo verrà mostrata nell'editor.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
