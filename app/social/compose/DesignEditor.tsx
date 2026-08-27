@@ -69,8 +69,11 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   // Ref invece che state per non re-renderare React su ogni frame di drag.
   const guidesRef = useRef<{ x: number[]; y: number[] }>({ x: [], y: [] })
   // Target attualmente "agganciato" su ciascun asse (isteresi dello snap).
-  const stickyXRef = useRef<number | null>(null)
-  const stickyYRef = useRef<number | null>(null)
+  // Memorizziamo anche edgeIdx (0=left/top, 1=center, 2=right/bottom): finché siamo
+  // agganciati, dobbiamo continuare a usare LO STESSO bordo per calcolare la correzione,
+  // altrimenti passiamo tra bordi diversi frame per frame e l'oggetto vibra.
+  const stickyXRef = useRef<{ target: number; edgeIdx: number } | null>(null)
+  const stickyYRef = useRef<{ target: number; edgeIdx: number } | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -148,12 +151,6 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       const objXs = [r.left, r.left + r.width / 2, r.left + r.width]
       const objYs = [r.top, r.top + r.height / 2, r.top + r.height]
 
-      // [SNAP-DIAG] TEMP: log per capire perché lo snap "trabalza". Da rimuovere dopo diagnosi.
-      const _diagLeftBefore = obj.left
-      const _diagTopBefore = obj.top
-      const _diagStickyXBefore = stickyXRef.current
-      const _diagStickyYBefore = stickyYRef.current
-
       const xTargets: number[] = [0, cw / 2, cw]
       const yTargets: number[] = [0, ch / 2, ch]
       canvas.getObjects().forEach((o) => {
@@ -164,43 +161,41 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         yTargets.push(or.top, or.top + or.height / 2, or.top + or.height)
       })
 
-      // Helper: sceglie il miglior candidato tenendo conto dell'isteresi.
-      // Se stickyRef ha un valore, quel target resta preferito finché la sua distanza
-      // dal bordo più vicino dell'oggetto è < SNAP_RELEASE (~20px). Solo quando l'oggetto
-      // si allontana oltre SNAP_RELEASE, si cerca un nuovo candidato entro SNAP_THRESHOLD.
+      // Helper: sceglie il miglior candidato con isteresi + edge sticky.
+      // Se stickyRef è settato, resta agganciato USANDO SEMPRE LO STESSO BORDO memorizzato
+      // (edgeIdx) — non ricalcolare il bordo più vicino ogni frame, altrimenti l'oggetto
+      // oscilla tra correzioni riferite a bordi diversi.
+      // Solo se la distanza da quel bordo specifico supera SNAP_RELEASE si sblocca e si
+      // cerca liberamente un nuovo (target, edge) tra tutte le combinazioni.
       const pickWithHysteresis = (
         edges: number[],
         targets: number[],
-        stickyRef: React.MutableRefObject<number | null>,
+        stickyRef: React.MutableRefObject<{ target: number; edgeIdx: number } | null>,
       ): { bestDelta: number; snapped: number | null } => {
-        // 1) Se abbiamo un target sticky, prova a mantenerlo
         if (stickyRef.current !== null) {
-          const t = stickyRef.current
-          let minAbs = Infinity
-          let minD = 0
-          for (const e of edges) {
-            const d = t - e
-            if (Math.abs(d) < minAbs) { minAbs = Math.abs(d); minD = d }
+          const { target, edgeIdx } = stickyRef.current
+          const d = target - edges[edgeIdx]
+          if (Math.abs(d) < SNAP_RELEASE) {
+            return { bestDelta: d, snapped: target }
           }
-          if (minAbs < SNAP_RELEASE) {
-            return { bestDelta: minD, snapped: t }
-          }
-          // Distanza superata → sblocca e cerca sotto
           stickyRef.current = null
         }
-        // 2) Nessun sticky (o appena rilasciato): cerca miglior candidato entro SNAP_THRESHOLD
         let bestDelta = 0
+        let bestEdgeIdx = -1
         let snapped: number | null = null
-        for (const e of edges) {
+        for (let i = 0; i < edges.length; i++) {
           for (const t of targets) {
-            const d = t - e
+            const d = t - edges[i]
             if (Math.abs(d) < SNAP_THRESHOLD && (snapped === null || Math.abs(d) < Math.abs(bestDelta))) {
               bestDelta = d
+              bestEdgeIdx = i
               snapped = t
             }
           }
         }
-        if (snapped !== null) stickyRef.current = snapped
+        if (snapped !== null && bestEdgeIdx >= 0) {
+          stickyRef.current = { target: snapped, edgeIdx: bestEdgeIdx }
+        }
         return { bestDelta, snapped }
       }
 
@@ -212,16 +207,32 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       if (bestDy !== 0) obj.set({ top: (obj.top ?? 0) + bestDy / z })
       obj.setCoords()
 
+      // Fix architetturale: Fabric ricalcola ad ogni frame `newLeft = mouse_scene_x - offsetX`
+      // usando l'offsetX fissato al mousedown, ignorando le nostre correzioni. Risultato: al
+      // frame successivo Fabric riparte dal grezzo e la nostra correzione viene "sovrascritta"
+      // (accumulando un debito di posizione visibile come salto al rilascio dello sticky).
+      // Fix: aggiorniamo l'offset interno di Fabric così che il prossimo `newLeft` calcolato
+      // corrisponda già alla posizione snappata. Invariante: obj.left_new = mouse - offsetX_new
+      // → offsetX_new = offsetX_old - bestDx/z (analogo per Y).
+      //
+      // ⚠️ API INTERNA NON UFFICIALE DI FABRIC — `canvas._currentTransform` è marcato @private
+      // in Canvas.mjs (usato internamente da _transformObject). Il cast `as unknown as {...}`
+      // aggira il tipo pubblico ma NON è garantito dall'API stabile.
+      // Se si aggiorna la versione di fabric in package.json (attualmente 7.4.0), VERIFICARE
+      // MANUALMENTE questo blocco: il campo _currentTransform o la forma di offsetX/Y potrebbero
+      // essere rinominati o rimossi senza produrre errori TypeScript, e lo snap tornerebbe a
+      // "trabalzare" silenziosamente. Riferimento sorgente: fabric/dist/src/controls/drag.mjs
+      // e fabric/dist/src/canvas/Canvas.mjs (_transformObject / _performTransformAction).
+      const transform = (canvas as unknown as { _currentTransform?: { offsetX: number; offsetY: number } })._currentTransform
+      if (transform) {
+        if (bestDx !== 0) transform.offsetX -= bestDx / z
+        if (bestDy !== 0) transform.offsetY -= bestDy / z
+      }
+
       guidesRef.current = {
         x: snappedX !== null ? [snappedX] : [],
         y: snappedY !== null ? [snappedY] : [],
       }
-
-      // [SNAP-DIAG] TEMP: dump completo dello stato del frame — string piatta per copia da console
-      // eslint-disable-next-line no-console
-      console.log(
-        `[SNAP] z=${z} | L before=${_diagLeftBefore?.toFixed(1)} after=${obj.left?.toFixed(1)}   sticky=${_diagStickyXBefore}->${stickyXRef.current} bestDx=${bestDx?.toFixed(1)}   snappedX=${snappedX} | T before=${_diagTopBefore?.toFixed(1)} after=${obj.top?.toFixed(1)}   sticky=${_diagStickyYBefore}->${stickyYRef.current} bestDy=${bestDy?.toFixed(1)}   snappedY=${snappedY}`
-      )
     })
 
     canvas.on('mouse:up', () => {
