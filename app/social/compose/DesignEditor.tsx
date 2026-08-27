@@ -151,8 +151,6 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       // [SNAP-DIAG] TEMP: log per capire perché lo snap "trabalza". Da rimuovere dopo diagnosi.
       const _diagLeftBefore = obj.left
       const _diagTopBefore = obj.top
-      const _diagEdgesX = [...objXs]
-      const _diagEdgesY = [...objYs]
       const _diagStickyXBefore = stickyXRef.current
       const _diagStickyYBefore = stickyYRef.current
 
@@ -219,13 +217,11 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         y: snappedY !== null ? [snappedY] : [],
       }
 
-      // [SNAP-DIAG] TEMP: dump completo dello stato del frame
+      // [SNAP-DIAG] TEMP: dump completo dello stato del frame — string piatta per copia da console
       // eslint-disable-next-line no-console
-      console.log('[SNAP]', {
-        z,
-        left: { before: _diagLeftBefore, after: obj.left, edges: _diagEdgesX, sticky_before: _diagStickyXBefore, sticky_after: stickyXRef.current, bestDx, snappedX },
-        top:  { before: _diagTopBefore,  after: obj.top,  edges: _diagEdgesY, sticky_before: _diagStickyYBefore, sticky_after: stickyYRef.current, bestDy, snappedY },
-      })
+      console.log(
+        `[SNAP] z=${z} | L before=${_diagLeftBefore?.toFixed(1)} after=${obj.left?.toFixed(1)}   sticky=${_diagStickyXBefore}->${stickyXRef.current} bestDx=${bestDx?.toFixed(1)}   snappedX=${snappedX} | T before=${_diagTopBefore?.toFixed(1)} after=${obj.top?.toFixed(1)}   sticky=${_diagStickyYBefore}->${stickyYRef.current} bestDy=${bestDy?.toFixed(1)}   snappedY=${snappedY}`
+      )
     })
 
     canvas.on('mouse:up', () => {
