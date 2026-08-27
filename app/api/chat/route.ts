@@ -224,40 +224,65 @@ async function saveMessage(chatId: string, role: string, content: string) {
 async function loadFounderProfile(userId: string): Promise<{ text: string; track: string | null }> {
     if (!userId) return { text: '', track: null }
     try {
-        const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${userId}&select=*`,
-            { headers: sbHeaders }
-        )
-        if (!res.ok) return { text: '', track: null }
-        const rows = await res.json()
-        if (!rows.length) return { text: '', track: null }
-        const p = rows[0]
-        const lines: string[] = []
-        if (p.track)              lines.push(`Founder track: ${p.track}`)
-        if (p.idea)               lines.push(`Business idea: ${p.idea}`)
-        if (p.stage)              lines.push(`Stage: ${p.stage}`)
-        if (p.problem)            lines.push(`Urgent problem: ${p.problem}`)
-        if (p.sector)             lines.push(`Sector: ${p.sector}`)
-        if (p.model)              lines.push(`Business model: ${p.model}`)
-        if (p.product_type)       lines.push(`Product type: ${p.product_type}`)
-        if (p.country)            lines.push(`Country: ${p.country}`)
-        if (p.target_market)      lines.push(`Target market: ${p.target_market}`)
-        if (p.budget)             lines.push(`Budget: ${p.budget}`)
-        if (p.time_available)     lines.push(`Time available: ${p.time_available}`)
-        if (p.team)               lines.push(`Team: ${p.team}`)
-        if (p.audience)           lines.push(`Audience: ${p.audience}`)
-        if (p.investors)          lines.push(`Investor access: ${p.investors}`)
-        if (p.expertise)          lines.push(`Background: ${p.expertise}`)
-        if (p.first_time)         lines.push(`First business: ${p.first_time}`)
-        if (p.failure)            lines.push(`Failed before: ${p.failure}`)
-        if (p.biggest_mistake)    lines.push(`Biggest mistake: ${p.biggest_mistake}`)
-        if (p.goal)               lines.push(`End goal: ${p.goal}`)
-        if (p.fear)               lines.push(`Biggest fear: ${p.fear}`)
-        if (p.timeline)           lines.push(`Revenue timeline: ${p.timeline}`)
-        return {
-            text: lines.length ? '\n\nFOUNDER PROFILE:\n' + lines.join('\n') : '',
-            track: p.track ?? null,
+        // Carichiamo in parallelo profilo e connessioni social — sono due tabelle indipendenti.
+        const [profileRes, connectionsRes] = await Promise.all([
+            fetch(
+                `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${userId}&select=*`,
+                { headers: sbHeaders }
+            ),
+            fetch(
+                `${SUPABASE_URL}/rest/v1/social_connections?user_id=eq.${userId}&select=platform,status`,
+                { headers: sbHeaders }
+            ),
+        ])
+
+        let profileText = ''
+        let track: string | null = null
+        if (profileRes.ok) {
+            const rows = await profileRes.json()
+            if (rows.length) {
+                const p = rows[0]
+                const lines: string[] = []
+                if (p.track)              lines.push(`Founder track: ${p.track}`)
+                if (p.idea)               lines.push(`Business idea: ${p.idea}`)
+                if (p.stage)              lines.push(`Stage: ${p.stage}`)
+                if (p.problem)            lines.push(`Urgent problem: ${p.problem}`)
+                if (p.sector)             lines.push(`Sector: ${p.sector}`)
+                if (p.model)              lines.push(`Business model: ${p.model}`)
+                if (p.product_type)       lines.push(`Product type: ${p.product_type}`)
+                if (p.country)            lines.push(`Country: ${p.country}`)
+                if (p.target_market)      lines.push(`Target market: ${p.target_market}`)
+                if (p.budget)             lines.push(`Budget: ${p.budget}`)
+                if (p.time_available)     lines.push(`Time available: ${p.time_available}`)
+                if (p.team)               lines.push(`Team: ${p.team}`)
+                if (p.audience)           lines.push(`Audience: ${p.audience}`)
+                if (p.investors)          lines.push(`Investor access: ${p.investors}`)
+                if (p.expertise)          lines.push(`Background: ${p.expertise}`)
+                if (p.first_time)         lines.push(`First business: ${p.first_time}`)
+                if (p.failure)            lines.push(`Failed before: ${p.failure}`)
+                if (p.biggest_mistake)    lines.push(`Biggest mistake: ${p.biggest_mistake}`)
+                if (p.goal)               lines.push(`End goal: ${p.goal}`)
+                if (p.fear)               lines.push(`Biggest fear: ${p.fear}`)
+                if (p.timeline)           lines.push(`Revenue timeline: ${p.timeline}`)
+                profileText = lines.length ? '\n\nFOUNDER PROFILE:\n' + lines.join('\n') : ''
+                track = p.track ?? null
+            }
         }
+
+        // Blocco social: elenca piattaforme attive + istruzione proattiva a Sloan.
+        let socialText = ''
+        if (connectionsRes.ok) {
+            const conns = await connectionsRes.json() as { platform?: string; status?: string }[]
+            const connected = Array.isArray(conns)
+                ? conns.filter((c) => c.status === 'connected').map((c) => c.platform).filter((p): p is string => !!p)
+                : []
+            const stateLine = connected.length > 0
+                ? `Connected platforms: ${connected.join(', ')}`
+                : 'No social platforms connected yet.'
+            socialText = `\n\nSOCIAL CONNECTIONS:\n${stateLine}\n\nGUIDANCE: Se la conversazione riguarda marketing, social media, o crescita del business, e il founder non ha ancora connesso piattaforme social rilevanti per il suo settore, suggerisci proattivamente di collegarle dal Social Media Manager (sezione raggiungibile dalla dashboard) — ma solo quando è pertinente al discorso, non forzare il suggerimento in ogni risposta.`
+        }
+
+        return { text: profileText + socialText, track }
     } catch {
         return { text: '', track: null }
     }
