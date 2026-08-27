@@ -148,6 +148,14 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       const objXs = [r.left, r.left + r.width / 2, r.left + r.width]
       const objYs = [r.top, r.top + r.height / 2, r.top + r.height]
 
+      // [SNAP-DIAG] TEMP: log per capire perché lo snap "trabalza". Da rimuovere dopo diagnosi.
+      const _diagLeftBefore = obj.left
+      const _diagTopBefore = obj.top
+      const _diagEdgesX = [...objXs]
+      const _diagEdgesY = [...objYs]
+      const _diagStickyXBefore = stickyXRef.current
+      const _diagStickyYBefore = stickyYRef.current
+
       const xTargets: number[] = [0, cw / 2, cw]
       const yTargets: number[] = [0, ch / 2, ch]
       canvas.getObjects().forEach((o) => {
@@ -210,6 +218,14 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         x: snappedX !== null ? [snappedX] : [],
         y: snappedY !== null ? [snappedY] : [],
       }
+
+      // [SNAP-DIAG] TEMP: dump completo dello stato del frame
+      // eslint-disable-next-line no-console
+      console.log('[SNAP]', {
+        z,
+        left: { before: _diagLeftBefore, after: obj.left, edges: _diagEdgesX, sticky_before: _diagStickyXBefore, sticky_after: stickyXRef.current, bestDx, snappedX },
+        top:  { before: _diagTopBefore,  after: obj.top,  edges: _diagEdgesY, sticky_before: _diagStickyYBefore, sticky_after: stickyYRef.current, bestDy, snappedY },
+      })
     })
 
     canvas.on('mouse:up', () => {
