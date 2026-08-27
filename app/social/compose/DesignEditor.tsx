@@ -16,7 +16,11 @@ type UnsplashPhoto = {
   downloadLocation: string
 }
 
-const SNAP_THRESHOLD = 6 // pixel schermo entro cui scatta l'allineamento durante il drag
+// Cattura: entro questa distanza dal target scatta un nuovo snap.
+const SNAP_THRESHOLD = 8
+// Rilascio (isteresi): una volta agganciati, servono più pixel per staccarsi. Evita che
+// due target vicini "rubino" l'aggancio a vicenda facendo vibrare lo snap.
+const SNAP_RELEASE = SNAP_THRESHOLD * 2.5
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.25
@@ -64,6 +68,9 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   // Guide di allineamento correnti (in coordinate viewport = pixel DOM canvas).
   // Ref invece che state per non re-renderare React su ogni frame di drag.
   const guidesRef = useRef<{ x: number[]; y: number[] }>({ x: [], y: [] })
+  // Target attualmente "agganciato" su ciascun asse (isteresi dello snap).
+  const stickyXRef = useRef<number | null>(null)
+  const stickyYRef = useRef<number | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -151,28 +158,48 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         yTargets.push(or.top, or.top + or.height / 2, or.top + or.height)
       })
 
-      let bestDx = 0
-      let snappedX: number | null = null
-      for (const x of objXs) {
-        for (const t of xTargets) {
-          const d = t - x
-          if (Math.abs(d) < SNAP_THRESHOLD && (snappedX === null || Math.abs(d) < Math.abs(bestDx))) {
-            bestDx = d
-            snappedX = t
+      // Helper: sceglie il miglior candidato tenendo conto dell'isteresi.
+      // Se stickyRef ha un valore, quel target resta preferito finché la sua distanza
+      // dal bordo più vicino dell'oggetto è < SNAP_RELEASE (~20px). Solo quando l'oggetto
+      // si allontana oltre SNAP_RELEASE, si cerca un nuovo candidato entro SNAP_THRESHOLD.
+      const pickWithHysteresis = (
+        edges: number[],
+        targets: number[],
+        stickyRef: React.MutableRefObject<number | null>,
+      ): { bestDelta: number; snapped: number | null } => {
+        // 1) Se abbiamo un target sticky, prova a mantenerlo
+        if (stickyRef.current !== null) {
+          const t = stickyRef.current
+          let minAbs = Infinity
+          let minD = 0
+          for (const e of edges) {
+            const d = t - e
+            if (Math.abs(d) < minAbs) { minAbs = Math.abs(d); minD = d }
+          }
+          if (minAbs < SNAP_RELEASE) {
+            return { bestDelta: minD, snapped: t }
+          }
+          // Distanza superata → sblocca e cerca sotto
+          stickyRef.current = null
+        }
+        // 2) Nessun sticky (o appena rilasciato): cerca miglior candidato entro SNAP_THRESHOLD
+        let bestDelta = 0
+        let snapped: number | null = null
+        for (const e of edges) {
+          for (const t of targets) {
+            const d = t - e
+            if (Math.abs(d) < SNAP_THRESHOLD && (snapped === null || Math.abs(d) < Math.abs(bestDelta))) {
+              bestDelta = d
+              snapped = t
+            }
           }
         }
+        if (snapped !== null) stickyRef.current = snapped
+        return { bestDelta, snapped }
       }
-      let bestDy = 0
-      let snappedY: number | null = null
-      for (const y of objYs) {
-        for (const t of yTargets) {
-          const d = t - y
-          if (Math.abs(d) < SNAP_THRESHOLD && (snappedY === null || Math.abs(d) < Math.abs(bestDy))) {
-            bestDy = d
-            snappedY = t
-          }
-        }
-      }
+
+      const { bestDelta: bestDx, snapped: snappedX } = pickWithHysteresis(objXs, xTargets, stickyXRef)
+      const { bestDelta: bestDy, snapped: snappedY } = pickWithHysteresis(objYs, yTargets, stickyYRef)
 
       // delta è in coord viewport (pixel schermo); obj.left è in world → dividi per zoom
       if (bestDx !== 0) obj.set({ left: (obj.left ?? 0) + bestDx / z })
@@ -186,6 +213,10 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     })
 
     canvas.on('mouse:up', () => {
+      // Fine drag: reset sticky targets, così il prossimo drag riparte "libero"
+      // senza portarsi dietro un aggancio del drag precedente.
+      stickyXRef.current = null
+      stickyYRef.current = null
       if (guidesRef.current.x.length || guidesRef.current.y.length) {
         guidesRef.current = { x: [], y: [] }
         canvas.requestRenderAll()
@@ -270,6 +301,8 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
       originalDimsRef.current = null
       baseSizeRef.current = null
       guidesRef.current = { x: [], y: [] }
+      stickyXRef.current = null
+      stickyYRef.current = null
     }
   }, [imageUrl])
 
