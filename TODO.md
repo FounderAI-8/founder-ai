@@ -177,3 +177,69 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       e assicurarsi che ogni tabella con RLS attiva abbia almeno le policy SELECT/INSERT/UPDATE 
       necessarie per il funzionamento previsto, altrimenti disabilitare RLS se l'accesso è 
       gestito solo lato server con service role key.
+
+## Backlog raccolto — sessione di revisione note (da prioritizzare)
+
+### Gruppo 1 — Quick win (poche ore ciascuno)
+- [ ] Rimuovere l'alert "l'AI non è affidabile nello scrivere testo" nel composer — con GPT 
+      Image 2 il problema è molto ridotto rispetto a gpt-image-1-mini, l'avviso è ora fuorviante
+- [ ] Indicatore di progresso (barra/spinner) durante la generazione immagine nel composer — 
+      oggi c'è solo il testo "Generazione…" sul bottone
+- [ ] Sloan consiglia i connettori disponibili in base al tipo/settore dell'azienda del founder — 
+      estensione naturale di quanto già fa nella dashboard
+
+### Gruppo 2 — Ben definiti, impegno medio
+- [ ] Feature standard da chatbot in Sloan: interrompere la generazione di un messaggio, 
+      modificare un messaggio già inviato, allegare file alla chat
+- [ ] Risposte a scelta multipla per Sloan quando serve chiarire qualcosa prima di rispondere 
+      (pattern "bottoni cliccabili" invece di solo testo libero)
+- [ ] Generatore copertine per YouTube (verificare se estendibile a cover TikTok/Instagram) — 
+      probabilmente un preset dedicato nel composer esistente, non una funzione da zero
+- [ ] Sloan più proattivo: suggerimenti di contenuto, analisi insight/performance, analisi e 
+      consigli sulla gestione ads (se il founder le usa), oltre a quanto già fa (ricerca trend 
+      virali). Si appoggia ai connettori/analytics già disponibili via Zernio.
+- [ ] Sloan più "pratico": oltre alla knowledge base strategica, deve saper consigliare quali 
+      strumenti/software usare per compiti operativi specifici (es. "quale POS per un bar"), 
+      dare guide pratiche passo-passo (es. "come configuro Google Business Profile"), e aiutare 
+      a risolvere problemi tecnici specifici che il founder segnala. Target primario: founder 
+      con poca esperienza tecnica (soprattutto PMI/primo business), ma utile per tutti. 
+      Probabilmente richiede web_search abilitato anche nella chat normale con Sloan (oggi 
+      attivo solo per Calendario & Trend), non solo la KB statica.
+
+### Gruppo 3 — Da chiarire/investigare prima di implementare
+- [ ] Editor Design: migliorare lo snapping — oggi "trabalza" invece di agganciarsi con 
+      decisione quando ci si avvicina a una linea di allineamento (probabile causa: il punto di 
+      snap compete tra più linee candidate vicine tra loro e salta dall'una all'altra invece di 
+      scegliere la più forte e restarci agganciato). Fix probabile: aumentare la soglia di 
+      cattura e aggiungere isteresi (una volta agganciato, serve un movimento più ampio per 
+      staccarsi) invece del semplice confronto di soglia attuale.
+- [ ] Editor Design: valutare miglioramenti agli strumenti di modifica forme — specificare 
+      cosa manca esattamente prima di implementare (rotazione? ridimensionamento più preciso? 
+      ombre?)
+- [ ] Fare una ricognizione di cosa offre Claude Design (prodotto Anthropic) per capire quali 
+      funzionalità aggiuntive avrebbe senso valutare per il nostro editor — usare come fonte di 
+      ispirazione, non come obiettivo di replica totale (stesso principio già applicato quando 
+      abbiamo scartato la parità completa con Canva)
+
+### Gruppo 4 — Grandi, da trattare come progetti a sé (documento di specifica dedicato prima di implementare)
+- [ ] Editor video nel composer — salto di complessità enorme rispetto all'editor immagine 
+      attuale (timeline, taglio, transizioni). Da NON trattare come "aggiunta" ma come progetto 
+      indipendente con la sua sessione di pianificazione.
+- [ ] Pubblicazione autonoma di Sloan (senza revisione del founder prima di pubblicare) — 
+      CONFERMATO: deve essere un'opzione esplicita che il founder attiva consapevolmente nelle 
+      impostazioni ("Sloan pubblica in autonomia"), MAI il comportamento di default. Rischio 
+      reputazionale reale se un post generato male viene pubblicato senza controllo umano.
+- [ ] Integrazione con uno strumento di gestione contabile/finanziaria (entrate, uscite, 
+      investimenti, magazzino) che Lumina sta sviluppando separatamente — IN PAUSA fino a 
+      quando quel progetto avrà una forma più definita da poter integrare. Nota di cautela: 
+      consulenza finanziaria/fiscale specifica è un'area regolamentata in molti paesi — quando 
+      si riprende questo punto, va chiarito se Sloan si limita a richiamare/integrare quello 
+      strumento (rischio di compliance sullo strumento stesso, gestito separatamente) oppure 
+      dà consigli finanziari lui stesso nella chat (rischio diretto da evitare).
+- [ ] Scaricare file/video dei post generati — chiarire lo scope esatto: scaricare il post 
+      generato sul proprio dispositivo, o importare/gestire video propri da modificare? Sono 
+      due funzionalità diverse.
+
+### Verifica separata (non implementazione)
+- [ ] Testare Sloan con conversazioni mirate per verificare che sia ben bilanciato tra il track 
+      "startup" e il track "smb/PMI" nella pratica, non solo nella progettazione della KB
