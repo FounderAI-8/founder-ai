@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Canvas, IText, Textbox, FabricImage, Rect, Circle, Line } from 'fabric'
+import { Canvas, IText, Textbox, FabricImage, Rect, Circle, Line, util, type FabricObject } from 'fabric'
 import { supabase } from '@/lib/supabase'
+import { EDITOR_TEMPLATES, type EditorTemplate } from '@/lib/editor-templates'
 
 type ShapeObject = Rect | Circle | Line
 
@@ -81,6 +82,9 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
   const [unsplashError, setUnsplashError] = useState<string | null>(null)
   // Credit accumulati per la sessione. Dedup per photographerUrl.
   const [unsplashCredits, setUnsplashCredits] = useState<{ photographerName: string; photographerUrl: string }[]>([])
+
+  // --- Template pronti ---
+  const [templatesOpen, setTemplatesOpen] = useState(false)
 
   // Inject Google Fonts so they're available both for display and canvas rasterization
   useEffect(() => {
@@ -538,6 +542,62 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
     }
   }
 
+  // --- Template application ---
+
+  const applyTemplate = async (tpl: EditorTemplate) => {
+    const canvas = fabricRef.current
+    if (!canvas) return
+
+    // Se ci sono già layer custom (oltre alla base image), chiedi conferma:
+    // il template viene ADDIZIONATO sopra, non sostituisce.
+    const customLayers = canvas.getObjects().filter(
+      (o) => !(o as unknown as { excludeFromUnsaved?: boolean }).excludeFromUnsaved,
+    )
+    if (customLayers.length > 0) {
+      if (!window.confirm(
+        'Il canvas contiene già altri elementi. Il template verrà aggiunto sopra: continuare?',
+      )) return
+    }
+
+    // Scala uniforme sull'asse minore (per non deformare); center-offset per canvas non quadrati.
+    const { w, h } = baseSize()
+    const scale = Math.min(w / 720, h / 720)
+    const offsetX = (w - 720 * scale) / 2
+    const offsetY = (h - 720 * scale) / 2
+
+    // Proprietà da scalare senza offset (dimensioni lineari)
+    const SCALE_ONLY = ['width', 'height', 'fontSize', 'strokeWidth', 'radius', 'rx', 'ry']
+
+    const scaled = tpl.objects.map((o) => {
+      const src = o as Record<string, unknown>
+      const dst: Record<string, unknown> = { ...src }
+      if (typeof dst.left === 'number') dst.left = (dst.left as number) * scale + offsetX
+      if (typeof dst.top === 'number')  dst.top  = (dst.top  as number) * scale + offsetY
+      for (const p of SCALE_ONLY) {
+        if (typeof dst[p] === 'number') dst[p] = (dst[p] as number) * scale
+      }
+      // Coordinate Line (x1/y1/x2/y2): stessa trasformazione di left/top per asse rispettivo
+      for (const p of ['x1', 'x2'] as const) {
+        if (typeof dst[p] === 'number') dst[p] = (dst[p] as number) * scale + offsetX
+      }
+      for (const p of ['y1', 'y2'] as const) {
+        if (typeof dst[p] === 'number') dst[p] = (dst[p] as number) * scale + offsetY
+      }
+      return dst
+    })
+
+    try {
+      const enlived = await util.enlivenObjects<FabricObject>(scaled)
+      enlived.forEach((o) => canvas.add(o))
+      canvas.requestRenderAll()
+      setHasUnsavedChanges(true)
+      setTemplatesOpen(false)
+    } catch (err) {
+      console.error('[DesignEditor] template apply failed:', err)
+      setErrorMsg('Impossibile applicare il template.')
+    }
+  }
+
   // Generic shape mutator — same pattern as mutateText
   const mutateShape = (fn: (s: ShapeObject) => void) => {
     if (!fabricRef.current || !selectedShape) return
@@ -659,6 +719,12 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
         <button onClick={() => setUnsplashOpen(true)} disabled={loading}
           className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
           + Foto stock
+        </button>
+
+        <span className="w-px h-6 bg-[#1e2340] mx-1" />
+        <button onClick={() => setTemplatesOpen(true)} disabled={loading}
+          className="bg-[#1e2340] border border-[#534AB7] text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-[#2a3060] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+          Usa un template
         </button>
 
         <span className="w-px h-6 bg-[#1e2340] mx-1" />
@@ -912,6 +978,42 @@ export default function DesignEditor({ imageUrl, onSave, onClose }: DesignEditor
             {/* Footer: legal note */}
             <div className="border-t border-[#1e2340] px-4 py-2 text-[10px] text-gray-500">
               Foto fornite da Unsplash. L'attribuzione al fotografo verrà mostrata nell'editor.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- Modal template pronti --- */}
+      {templatesOpen && (
+        <div className="absolute inset-0 bg-black/80 z-40 flex items-center justify-center p-6"
+          onClick={(e) => { if (e.target === e.currentTarget) setTemplatesOpen(false) }}>
+          <div className="bg-[#0a0c1a] border border-[#1e2340] rounded-lg w-full max-w-3xl flex flex-col" style={{ maxHeight: '90%' }}>
+            {/* Header */}
+            <div className="flex items-center justify-between border-b border-[#1e2340] px-4 py-3">
+              <h3 className="text-white font-semibold text-sm">Scegli un template</h3>
+              <button onClick={() => setTemplatesOpen(false)} className="text-sm text-gray-400 hover:text-white transition-colors">
+                ✕ Chiudi
+              </button>
+            </div>
+
+            {/* Grid */}
+            <div className="flex-1 overflow-auto p-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {EDITOR_TEMPLATES.map((tpl) => (
+                  <button
+                    key={tpl.id}
+                    onClick={() => applyTemplate(tpl)}
+                    className="bg-[#0f1229] border border-[#1e2340] rounded-lg p-4 text-left hover:border-[#534AB7] transition-colors">
+                    <h4 className="text-white font-medium text-sm mb-1">{tpl.label}</h4>
+                    <p className="text-gray-400 text-xs">{tpl.description}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Footer note */}
+            <div className="border-t border-[#1e2340] px-4 py-2 text-[10px] text-gray-500">
+              Il template viene aggiunto sopra il canvas corrente. Tutti gli elementi restano modificabili.
             </div>
           </div>
         </div>
