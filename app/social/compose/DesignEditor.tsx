@@ -17,10 +17,12 @@ type UnsplashPhoto = {
 }
 
 // Cattura: entro questa distanza dal target scatta un nuovo snap.
-const SNAP_THRESHOLD = 8
+const SNAP_THRESHOLD = 5
 // Rilascio (isteresi): una volta agganciati, servono più pixel per staccarsi. Evita che
-// due target vicini "rubino" l'aggancio a vicenda facendo vibrare lo snap.
-const SNAP_RELEASE = SNAP_THRESHOLD * 2.5
+// due target vicini "rubino" l'aggancio a vicenda facendo vibrare lo snap. Moltiplicatore
+// basso (1.5x → ~7.5px) per limitare quanto cursore e oggetto possono separarsi visivamente
+// mentre lo snap è attivo.
+const SNAP_RELEASE = SNAP_THRESHOLD * 1.5
 const ZOOM_MIN = 0.25
 const ZOOM_MAX = 3
 const ZOOM_STEP = 0.25
