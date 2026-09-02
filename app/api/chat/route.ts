@@ -321,24 +321,37 @@ export async function POST(req: NextRequest) {
         // Save user message before streaming starts so it's never lost
         await saveMessage(chatId, 'user', message)
 
+        // Avvia la chiamata Anthropic PRIMA di costruire la ReadableStream.
+        // Se fallisce qui (credito esaurito, rate limit, rete) possiamo ancora
+        // restituire un codice HTTP di errore invece di un 200 con body vuoto.
+        const anthropicStreamResult = await client.messages.create(
+            {
+                model: 'claude-sonnet-4-6',
+                max_tokens: 1024,
+                system: systemPrompt,
+                messages,
+                stream: true,
+            },
+            { signal: req.signal }
+        )
+            .then(s => ({ ok: true as const, stream: s }))
+            .catch((e: unknown) => ({ ok: false as const, error: e }))
+
+        if (!anthropicStreamResult.ok) {
+            console.error('Anthropic API error:', anthropicStreamResult.error)
+            return NextResponse.json(
+                { error: 'Sloan non è riuscito a rispondere, riprova tra poco.' },
+                { status: 503 }
+            )
+        }
+
         let fullReply = ''
         const encoder = new TextEncoder()
 
         const readable = new ReadableStream({
             async start(controller) {
                 try {
-                    const stream = await client.messages.create(
-                        {
-                            model: 'claude-sonnet-4-6',
-                            max_tokens: 1024,
-                            system: systemPrompt,
-                            messages,
-                            stream: true,
-                        },
-                        { signal: req.signal }
-                    )
-
-                    for await (const event of stream) {
+                    for await (const event of anthropicStreamResult.stream) {
                         if (
                             event.type === 'content_block_delta' &&
                             event.delta.type === 'text_delta'

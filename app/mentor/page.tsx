@@ -162,6 +162,17 @@ export default function MentorPage() {
                 }),
             })
 
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => null)
+                const errorMessage = errorData?.error ?? 'Sloan non è riuscito a rispondere, riprova tra poco.'
+                setMessages(prev => {
+                    const copy = [...prev]
+                    copy[copy.length - 1] = { ...copy[copy.length - 1], content: errorMessage }
+                    return copy
+                })
+                return
+            }
+
             if (!response.body) throw new Error('No response body')
 
             const reader = response.body.getReader()
