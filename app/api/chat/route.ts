@@ -214,7 +214,7 @@ async function saveMessage(chatId: string, role: string, content: string) {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/mentor_messages`, {
             method: 'POST',
             headers: sbHeaders,
-            body: JSON.stringify({ chat_id: chatId, role, content }),
+            body: JSON.stringify({ chat_id: chatId, session_id: chatId, role, content }),
         })
         if (!res.ok) {
             console.error(`saveMessage failed [${res.status}]:`, await res.text())
