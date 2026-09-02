@@ -35,6 +35,8 @@ export default function MentorPage() {
     const [editingTitle, setEditingTitle] = useState('')
     const titleInputRef = useRef<HTMLInputElement>(null)
 
+    const [abortController, setAbortController] = useState<AbortController | null>(null)
+
     const bottomRef = useRef<HTMLDivElement>(null)
     const titleUpdatedRef = useRef(false)
 
@@ -134,14 +136,25 @@ export default function MentorPage() {
         if (!input.trim() || loading || !currentChatIdRef.current) return
 
         const text = input.trim()
-        setMessages(prev => [...prev, { role: 'user', content: text }])
         setInput('')
         setLoading(true)
+
+        const controller = new AbortController()
+        setAbortController(controller)
+
+        // Add user bubble and empty assistant bubble together; the assistant
+        // bubble fills progressively as stream chunks arrive
+        setMessages(prev => [
+            ...prev,
+            { role: 'user', content: text },
+            { role: 'assistant', content: '' },
+        ])
 
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: controller.signal,
                 body: JSON.stringify({
                     message: text,
                     chatId: currentChatIdRef.current,
@@ -149,8 +162,22 @@ export default function MentorPage() {
                 }),
             })
 
-            const data = await response.json()
-            setMessages(prev => [...prev, { role: 'assistant', content: data.message }])
+            if (!response.body) throw new Error('No response body')
+
+            const reader = response.body.getReader()
+            const decoder = new TextDecoder()
+
+            while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                const chunk = decoder.decode(value, { stream: true })
+                setMessages(prev => {
+                    const copy = [...prev]
+                    const last = copy[copy.length - 1]
+                    copy[copy.length - 1] = { ...last, content: last.content + chunk }
+                    return copy
+                })
+            }
 
             if (!titleUpdatedRef.current) {
                 titleUpdatedRef.current = true
@@ -158,12 +185,34 @@ export default function MentorPage() {
                 const title = words.length < text.trim().length ? words + '…' : words
                 await updateChatTitle(currentChatIdRef.current!, title)
             }
-        } catch {
-            setMessages(prev => [...prev, { role: 'assistant', content: 'Errore di connessione.' }])
+        } catch (err) {
+            if (err instanceof Error && err.name === 'AbortError') {
+                // User interrupted — remove empty assistant bubble if no tokens arrived
+                setMessages(prev => {
+                    const last = prev[prev.length - 1]
+                    if (last.role === 'assistant' && last.content === '') {
+                        return prev.slice(0, -1)
+                    }
+                    return prev
+                })
+            } else {
+                // Network or unexpected error — show error in the assistant bubble
+                setMessages(prev => {
+                    const copy = [...prev]
+                    const last = copy[copy.length - 1]
+                    if (last.role === 'assistant' && last.content === '') {
+                        copy[copy.length - 1] = { ...last, content: 'Errore di connessione.' }
+                    }
+                    return copy
+                })
+            }
         } finally {
             setLoading(false)
+            setAbortController(null)
         }
     }
+
+    const handleInterrompi = () => abortController?.abort()
 
     // ── update title ──────────────────────────────────────────────────────────
 
@@ -357,20 +406,16 @@ export default function MentorPage() {
                                     ? 'bg-[#3B5BDB] text-white'
                                     : 'bg-[#0f1229] border border-[#1e2340] text-gray-200'
                             }`}>
-                                {msg.content.split('\n\n').map((para, i) => (
-                                    <p key={i} className={i > 0 ? 'mt-3' : ''}>{para}</p>
-                                ))}
+                                {msg.role === 'assistant' && loading && i === messages.length - 1 && msg.content === '' ? (
+                                    <span className="text-gray-500">Il mentor sta pensando...</span>
+                                ) : (
+                                    msg.content.split('\n\n').map((para, j) => (
+                                        <p key={j} className={j > 0 ? 'mt-3' : ''}>{para}</p>
+                                    ))
+                                )}
                             </div>
                         </div>
                     ))}
-
-                    {loading && (
-                        <div className="flex justify-start mb-6">
-                            <div className="bg-[#0f1229] border border-[#1e2340] rounded-2xl px-5 py-3 text-gray-400 text-sm">
-                                Il mentor sta pensando...
-                            </div>
-                        </div>
-                    )}
 
                     <div ref={bottomRef} />
                 </div>
@@ -385,13 +430,22 @@ export default function MentorPage() {
                             placeholder="Scrivi al tuo mentor..."
                             className="flex-1 bg-[#0f1229] border border-[#1e2340] text-white rounded-xl px-4 py-3 outline-none focus:border-[#3B5BDB] text-sm"
                         />
-                        <button
-                            onClick={sendMessage}
-                            disabled={loading || !input.trim() || !currentChatId}
-                            className="bg-[#3B5BDB] text-white rounded-xl px-6 py-3 font-medium hover:bg-[#5C7CFA] transition-colors disabled:opacity-40"
-                        >
-                            →
-                        </button>
+                        {loading ? (
+                            <button
+                                onClick={handleInterrompi}
+                                className="bg-red-700 text-white rounded-xl px-6 py-3 font-medium hover:bg-red-600 transition-colors"
+                            >
+                                ■ Interrompi
+                            </button>
+                        ) : (
+                            <button
+                                onClick={sendMessage}
+                                disabled={!input.trim() || !currentChatId}
+                                className="bg-[#3B5BDB] text-white rounded-xl px-6 py-3 font-medium hover:bg-[#5C7CFA] transition-colors disabled:opacity-40"
+                            >
+                                →
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>

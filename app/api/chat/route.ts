@@ -318,21 +318,55 @@ export async function POST(req: NextRequest) {
             { role: 'user' as const, content: message },
         ]
 
-        const response = await client.messages.create({
-            model: 'claude-sonnet-4-6',
-            max_tokens: 1024,
-            system: systemPrompt,
-            messages,
+        // Save user message before streaming starts so it's never lost
+        await saveMessage(chatId, 'user', message)
+
+        let fullReply = ''
+        const encoder = new TextEncoder()
+
+        const readable = new ReadableStream({
+            async start(controller) {
+                try {
+                    const stream = await client.messages.create(
+                        {
+                            model: 'claude-sonnet-4-6',
+                            max_tokens: 1024,
+                            system: systemPrompt,
+                            messages,
+                            stream: true,
+                        },
+                        { signal: req.signal }
+                    )
+
+                    for await (const event of stream) {
+                        if (
+                            event.type === 'content_block_delta' &&
+                            event.delta.type === 'text_delta'
+                        ) {
+                            const text = event.delta.text
+                            fullReply += text
+                            controller.enqueue(encoder.encode(text))
+                        }
+                    }
+                } catch {
+                    // AbortError when client disconnects — fall through to finally
+                } finally {
+                    // Save partial or full reply; skip if nothing was generated
+                    if (fullReply) {
+                        await saveMessage(chatId, 'assistant', fullReply)
+                    }
+                    controller.close()
+                }
+            },
         })
 
-        const reply = response.content[0].type === 'text' ? response.content[0].text : ''
-
-        await Promise.all([
-            saveMessage(chatId, 'user', message),
-            saveMessage(chatId, 'assistant', reply),
-        ])
-
-        return NextResponse.json({ message: reply })
+        return new Response(readable, {
+            headers: {
+                'Content-Type': 'text/plain; charset=utf-8',
+                'Cache-Control': 'no-cache',
+                'X-Content-Type-Options': 'nosniff',
+            },
+        })
     } catch (error) {
         console.error('Chat API error:', error)
         return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
