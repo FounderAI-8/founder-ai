@@ -211,13 +211,16 @@ async function loadHistory(chatId: string): Promise<Array<{ role: 'user' | 'assi
 
 async function saveMessage(chatId: string, role: string, content: string) {
     try {
-        await fetch(`${SUPABASE_URL}/rest/v1/mentor_messages`, {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/mentor_messages`, {
             method: 'POST',
             headers: sbHeaders,
             body: JSON.stringify({ chat_id: chatId, role, content }),
         })
-    } catch {
-        // silently fail
+        if (!res.ok) {
+            console.error(`saveMessage failed [${res.status}]:`, await res.text())
+        }
+    } catch (e) {
+        console.error('saveMessage error:', e)
     }
 }
 
