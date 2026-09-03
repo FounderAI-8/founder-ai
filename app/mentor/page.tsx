@@ -36,6 +36,7 @@ export default function MentorPage() {
     const titleInputRef = useRef<HTMLInputElement>(null)
 
     const [abortController, setAbortController] = useState<AbortController | null>(null)
+    const [newChatPending, setNewChatPending] = useState(false)
 
     const bottomRef = useRef<HTMLDivElement>(null)
     const titleUpdatedRef = useRef(false)
@@ -118,10 +119,15 @@ export default function MentorPage() {
     // ── new chat ──────────────────────────────────────────────────────────────
 
     const handleNewChat = async () => {
-        const newChat = await createChat()
-        if (!newChat) return
-        setChats(prev => [newChat, ...prev])
-        selectChat(newChat.id)
+        setNewChatPending(true)
+        try {
+            const newChat = await createChat()
+            if (!newChat) return
+            setChats(prev => [newChat, ...prev])
+            selectChat(newChat.id)
+        } finally {
+            setNewChatPending(false)
+        }
     }
 
     // ── scroll to bottom ──────────────────────────────────────────────────────
@@ -133,7 +139,7 @@ export default function MentorPage() {
     // ── send message ──────────────────────────────────────────────────────────
 
     const sendMessage = async () => {
-        if (!input.trim() || loading || !currentChatIdRef.current) return
+        if (!input.trim() || loading || newChatPending || !currentChatIdRef.current) return
 
         const text = input.trim()
         setInput('')
@@ -451,7 +457,7 @@ export default function MentorPage() {
                         ) : (
                             <button
                                 onClick={sendMessage}
-                                disabled={!input.trim() || !currentChatId}
+                                disabled={!input.trim() || !currentChatId || newChatPending}
                                 className="bg-[#3B5BDB] text-white rounded-xl px-6 py-3 font-medium hover:bg-[#5C7CFA] transition-colors disabled:opacity-40"
                             >
                                 →
