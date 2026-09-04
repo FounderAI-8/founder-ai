@@ -124,7 +124,9 @@ export default function MentorPage() {
             const newChat = await createChat()
             if (!newChat) return
             setChats(prev => [newChat, ...prev])
-            selectChat(newChat.id)
+            // await: setNewChatPending(false) nel finally deve scattare SOLO dopo
+            // che selectChat ha aggiornato ref, state e caricato la history.
+            await selectChat(newChat.id)
         } finally {
             setNewChatPending(false)
         }
@@ -148,6 +150,11 @@ export default function MentorPage() {
         const controller = new AbortController()
         setAbortController(controller)
 
+        // Snapshot del chatId: se l'utente cambia chat durante lo streaming, il
+        // salvataggio (anche di un parziale in caso di abort) deve comunque
+        // finire nella chat originale del send.
+        const chatIdAtSend = currentChatIdRef.current
+
         // Add user bubble and empty assistant bubble together; the assistant
         // bubble fills progressively as stream chunks arrive
         setMessages(prev => [
@@ -156,6 +163,8 @@ export default function MentorPage() {
             { role: 'assistant', content: '' },
         ])
 
+        let assistantText = ''
+
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
@@ -163,7 +172,7 @@ export default function MentorPage() {
                 signal: controller.signal,
                 body: JSON.stringify({
                     message: text,
-                    chatId: currentChatIdRef.current,
+                    chatId: chatIdAtSend,
                     userId: userIdRef.current,
                 }),
             })
@@ -188,6 +197,7 @@ export default function MentorPage() {
                 const { done, value } = await reader.read()
                 if (done) break
                 const chunk = decoder.decode(value, { stream: true })
+                assistantText += chunk
                 setMessages(prev => {
                     const copy = [...prev]
                     const last = copy[copy.length - 1]
@@ -196,15 +206,25 @@ export default function MentorPage() {
                 })
             }
 
+            // Streaming completato: salviamo il messaggio assistant integrale.
+            if (assistantText) {
+                await saveAssistantMessage(chatIdAtSend, assistantText)
+            }
+
             if (!titleUpdatedRef.current) {
                 titleUpdatedRef.current = true
                 const words = text.trim().split(/\s+/).slice(0, 6).join(' ')
                 const title = words.length < text.trim().length ? words + '…' : words
-                await updateChatTitle(currentChatIdRef.current!, title)
+                await updateChatTitle(chatIdAtSend, title)
             }
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // User interrupted — remove empty assistant bubble if no tokens arrived
+                // Abort utente: salva il testo parziale che era già a schermo
+                // (contract WYSIWYG — resta visibile dopo reload).
+                if (assistantText) {
+                    saveAssistantMessage(chatIdAtSend, assistantText).catch(() => {})
+                }
+                // Rimuove la bubble assistant vuota se nessun token è arrivato
                 setMessages(prev => {
                     const last = prev[prev.length - 1]
                     if (last.role === 'assistant' && last.content === '') {
@@ -241,6 +261,27 @@ export default function MentorPage() {
         })
         if (!res.ok) return
         setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
+    }
+
+    // ── save assistant message (client-driven) ────────────────────────────────
+    // Chiamato dopo lo streaming (done=true) o dopo abort con testo parziale.
+    // Sostituisce il salvataggio server-side che faceva /api/chat, per rendere
+    // deterministico il comportamento su abort di risposte brevi.
+    const saveAssistantMessage = async (chatId: string, content: string) => {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return
+        try {
+            await fetch('/api/messages/save', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ chatId, role: 'assistant', content }),
+            })
+        } catch {
+            // best effort — l'utente ha già visto il testo a schermo
+        }
     }
 
     // ── toggle pin ────────────────────────────────────────────────────────────

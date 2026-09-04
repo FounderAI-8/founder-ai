@@ -348,9 +348,13 @@ export async function POST(req: NextRequest) {
             )
         }
 
-        let fullReply = ''
         const encoder = new TextEncoder()
 
+        // Il salvataggio del messaggio assistant è responsabilità del client
+        // (POST /api/messages/save dopo done=true, o dopo abort con il testo
+        // parziale). Per risposte brevi lo stream Anthropic completa prima che
+        // req.signal si propaghi al server, quindi salvare qui salverebbe sempre
+        // il testo integrale anche dopo un abort.
         const readable = new ReadableStream({
             async start(controller) {
                 try {
@@ -359,18 +363,13 @@ export async function POST(req: NextRequest) {
                             event.type === 'content_block_delta' &&
                             event.delta.type === 'text_delta'
                         ) {
-                            const text = event.delta.text
-                            fullReply += text
-                            controller.enqueue(encoder.encode(text))
+                            controller.enqueue(encoder.encode(event.delta.text))
                         }
                     }
                 } catch {
-                    // AbortError when client disconnects — fall through to finally
+                    // AbortError: il signal passato a client.messages.create ferma
+                    // la generazione Anthropic in anticipo per risposte lunghe.
                 } finally {
-                    // Save partial or full reply; skip if nothing was generated
-                    if (fullReply) {
-                        await saveMessage(chatId, 'assistant', fullReply)
-                    }
                     controller.close()
                 }
             },
