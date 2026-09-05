@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
 
     try {
         const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/mentor_messages?chat_id=eq.${chatId}&order=created_at.asc&select=role,content`,
+            `${SUPABASE_URL}/rest/v1/mentor_messages?chat_id=eq.${chatId}&order=created_at.asc&select=id,role,content,created_at`,
             {
                 headers: {
                     apikey: SUPABASE_KEY,

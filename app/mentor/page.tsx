@@ -8,6 +8,10 @@ import { supabase } from '@/lib/supabase'
 interface Message {
     role: 'user' | 'assistant'
     content: string
+    // id/created_at popolati dopo il salvataggio (da history o da /api/messages/save).
+    // Assenti significa: messaggio non ancora persistito → non editabile.
+    id?: string
+    created_at?: string
 }
 
 interface Chat {
@@ -34,6 +38,10 @@ export default function MentorPage() {
     const [editingChatId, setEditingChatId] = useState<string | null>(null)
     const [editingTitle, setEditingTitle] = useState('')
     const titleInputRef = useRef<HTMLInputElement>(null)
+
+    const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null)
+    const [editingMessageText, setEditingMessageText] = useState('')
+    const messageEditRef = useRef<HTMLTextAreaElement>(null)
 
     const [abortController, setAbortController] = useState<AbortController | null>(null)
     const [newChatPending, setNewChatPending] = useState(false)
@@ -108,9 +116,16 @@ export default function MentorPage() {
         if (!res.ok) return
         const rows = await res.json()
         if (Array.isArray(rows) && rows.length > 0) {
-            setMessages(rows.map((r: { role: 'user' | 'assistant'; content: string }) => ({
+            setMessages(rows.map((r: {
+                id: string
+                role: 'user' | 'assistant'
+                content: string
+                created_at: string
+            }) => ({
+                id: r.id,
                 role: r.role,
                 content: r.content,
+                created_at: r.created_at,
             })))
             titleUpdatedRef.current = true
         }
@@ -140,11 +155,13 @@ export default function MentorPage() {
 
     // ── send message ──────────────────────────────────────────────────────────
 
-    const sendMessage = async () => {
-        if (!input.trim() || loading || newChatPending || !currentChatIdRef.current) return
+    // textArg: usato dal flusso di edit-and-regenerate (bypassa lo state input)
+    const sendMessage = async (textArg?: string) => {
+        if (loading || newChatPending || !currentChatIdRef.current) return
+        const text = (textArg ?? input).trim()
+        if (!text) return
 
-        const text = input.trim()
-        setInput('')
+        if (!textArg) setInput('')
         setLoading(true)
 
         const controller = new AbortController()
@@ -155,13 +172,41 @@ export default function MentorPage() {
         // finire nella chat originale del send.
         const chatIdAtSend = currentChatIdRef.current
 
-        // Add user bubble and empty assistant bubble together; the assistant
-        // bubble fills progressively as stream chunks arrive
+        // Optimistic UI: user bubble + empty assistant bubble
         setMessages(prev => [
             ...prev,
             { role: 'user', content: text },
             { role: 'assistant', content: '' },
         ])
+
+        // Salvataggio user PRIMA di chiamare /api/chat: se fallisce, rollback delle
+        // due bubble ottimistiche, ripristino dell'input, e errore visibile in chat
+        // (mai un messaggio "fantasma" in UI senza corrispondente in DB).
+        const userSaved = await saveMessageToDb(chatIdAtSend, 'user', text)
+        if (!userSaved) {
+            setMessages(prev => {
+                const copy = prev.slice(0, -2)
+                copy.push({
+                    role: 'assistant',
+                    content: 'Non sono riuscito a salvare il tuo messaggio. Verifica la connessione e riprova.',
+                })
+                return copy
+            })
+            if (!textArg) setInput(text)
+            setLoading(false)
+            setAbortController(null)
+            return
+        }
+
+        // Aggiorna la user bubble (penultima) con id/created_at reali
+        setMessages(prev => {
+            const copy = [...prev]
+            const idx = copy.length - 2
+            if (copy[idx]?.role === 'user') {
+                copy[idx] = { ...copy[idx], id: userSaved.id, created_at: userSaved.created_at }
+            }
+            return copy
+        })
 
         let assistantText = ''
 
@@ -171,7 +216,6 @@ export default function MentorPage() {
                 headers: { 'Content-Type': 'application/json' },
                 signal: controller.signal,
                 body: JSON.stringify({
-                    message: text,
                     chatId: chatIdAtSend,
                     userId: userIdRef.current,
                 }),
@@ -206,9 +250,19 @@ export default function MentorPage() {
                 })
             }
 
-            // Streaming completato: salviamo il messaggio assistant integrale.
+            // Streaming completato: salva assistant + aggiorna la bubble con id/created_at
             if (assistantText) {
-                await saveAssistantMessage(chatIdAtSend, assistantText)
+                const assistantSaved = await saveMessageToDb(chatIdAtSend, 'assistant', assistantText)
+                if (assistantSaved) {
+                    setMessages(prev => {
+                        const copy = [...prev]
+                        const idx = copy.length - 1
+                        if (copy[idx]?.role === 'assistant') {
+                            copy[idx] = { ...copy[idx], id: assistantSaved.id, created_at: assistantSaved.created_at }
+                        }
+                        return copy
+                    })
+                }
             }
 
             if (!titleUpdatedRef.current) {
@@ -219,10 +273,20 @@ export default function MentorPage() {
             }
         } catch (err) {
             if (err instanceof Error && err.name === 'AbortError') {
-                // Abort utente: salva il testo parziale che era già a schermo
-                // (contract WYSIWYG — resta visibile dopo reload).
+                // Abort utente: salva il parziale (contract WYSIWYG) + aggiorna id
                 if (assistantText) {
-                    saveAssistantMessage(chatIdAtSend, assistantText).catch(() => {})
+                    saveMessageToDb(chatIdAtSend, 'assistant', assistantText).then(assistantSaved => {
+                        if (assistantSaved) {
+                            setMessages(prev => {
+                                const copy = [...prev]
+                                const idx = copy.length - 1
+                                if (copy[idx]?.role === 'assistant') {
+                                    copy[idx] = { ...copy[idx], id: assistantSaved.id, created_at: assistantSaved.created_at }
+                                }
+                                return copy
+                            })
+                        }
+                    })
                 }
                 // Rimuove la bubble assistant vuota se nessun token è arrivato
                 setMessages(prev => {
@@ -263,24 +327,34 @@ export default function MentorPage() {
         setChats(prev => prev.map(c => c.id === chatId ? { ...c, title } : c))
     }
 
-    // ── save assistant message (client-driven) ────────────────────────────────
-    // Chiamato dopo lo streaming (done=true) o dopo abort con testo parziale.
-    // Sostituisce il salvataggio server-side che faceva /api/chat, per rendere
-    // deterministico il comportamento su abort di risposte brevi.
-    const saveAssistantMessage = async (chatId: string, content: string) => {
+    // ── save message (client-driven) ──────────────────────────────────────────
+    // Salva user o assistant tramite lo stesso endpoint autenticato. Ritorna
+    // { id, created_at } della riga inserita, o null se fallisce — il caller
+    // decide come gestire il fallimento (mai in silenzio).
+    const saveMessageToDb = async (
+        chatId: string,
+        role: 'user' | 'assistant',
+        content: string,
+    ): Promise<{ id: string; created_at: string } | null> => {
         const { data: { session } } = await supabase.auth.getSession()
-        if (!session?.access_token) return
+        if (!session?.access_token) return null
         try {
-            await fetch('/api/messages/save', {
+            const res = await fetch('/api/messages/save', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${session.access_token}`,
                 },
-                body: JSON.stringify({ chatId, role: 'assistant', content }),
+                body: JSON.stringify({ chatId, role, content }),
             })
+            if (!res.ok) return null
+            const data = await res.json()
+            if (typeof data?.id === 'string' && typeof data?.created_at === 'string') {
+                return { id: data.id, created_at: data.created_at }
+            }
+            return null
         } catch {
-            // best effort — l'utente ha già visto il testo a schermo
+            return null
         }
     }
 
@@ -319,6 +393,80 @@ export default function MentorPage() {
         }
         await updateChatTitle(editingChatId, editingTitle.trim())
         setEditingChatId(null)
+    }
+
+    // ── message editing (edit + regenerate) ───────────────────────────────────
+
+    const startMessageEdit = (index: number, currentContent: string) => {
+        setEditingMessageIndex(index)
+        setEditingMessageText(currentContent)
+        setTimeout(() => messageEditRef.current?.focus(), 0)
+    }
+
+    const cancelMessageEdit = () => {
+        setEditingMessageIndex(null)
+        setEditingMessageText('')
+    }
+
+    const commitMessageEdit = async () => {
+        if (editingMessageIndex === null) return
+        const newText = editingMessageText.trim()
+        if (!newText) return
+
+        const msg = messages[editingMessageIndex]
+        if (!msg?.created_at || !currentChatIdRef.current) {
+            cancelMessageEdit()
+            return
+        }
+
+        // Snapshot PRIMA del confirm dialog (window.confirm blocca sincronamente
+        // e nel frattempo l'utente potrebbe cambiare chat via sidebar).
+        const chatIdForEdit = currentChatIdRef.current
+        const afterCreatedAt = msg.created_at
+        const editIndex = editingMessageIndex
+
+        if (!window.confirm('I messaggi successivi verranno eliminati. Continuare?')) return
+
+        // Se la chat è cambiata durante il confirm, interrompi: non vogliamo
+        // rischiare un delete/rigenerazione su una chat che l'utente non sta
+        // più guardando.
+        if (currentChatIdRef.current !== chatIdForEdit) {
+            alert('Chat cambiata durante la modifica, operazione annullata.')
+            return
+        }
+
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) {
+            alert('Sessione scaduta, ricarica la pagina.')
+            return
+        }
+
+        try {
+            const res = await fetch('/api/messages/delete-after', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({ chatId: chatIdForEdit, afterCreatedAt }),
+            })
+            if (!res.ok) {
+                alert('Non sono riuscito a eliminare i messaggi. Riprova.')
+                return
+            }
+        } catch {
+            alert('Errore di rete durante l\'eliminazione.')
+            return
+        }
+
+        // Rimuovi dal state locale il messaggio in edit + tutti i successivi;
+        // sendMessage(newText) re-inserirà il messaggio user modificato e
+        // rigenererà la risposta assistant.
+        setMessages(prev => prev.slice(0, editIndex))
+        setEditingMessageIndex(null)
+        setEditingMessageText('')
+
+        sendMessage(newText)
     }
 
     // ── render ────────────────────────────────────────────────────────────────
@@ -457,23 +605,66 @@ export default function MentorPage() {
                         </div>
                     )}
 
-                    {messages.map((msg, i) => (
-                        <div key={i} className={`mb-6 flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                            <div className={`max-w-xl px-5 py-3 rounded-2xl text-sm leading-relaxed ${
-                                msg.role === 'user'
-                                    ? 'bg-[#3B5BDB] text-white'
-                                    : 'bg-[#0f1229] border border-[#1e2340] text-gray-200'
-                            }`}>
-                                {msg.role === 'assistant' && loading && i === messages.length - 1 && msg.content === '' ? (
-                                    <span className="text-gray-500">Il mentor sta pensando...</span>
-                                ) : (
-                                    msg.content.split('\n\n').map((para, j) => (
-                                        <p key={j} className={j > 0 ? 'mt-3' : ''}>{para}</p>
-                                    ))
-                                )}
+                    {messages.map((msg, i) => {
+                        const isEditing = editingMessageIndex === i
+                        const canEdit = msg.role === 'user' && !!msg.created_at && !loading && editingMessageIndex === null
+                        return (
+                            <div key={msg.id ?? `local-${i}`} className={`mb-6 flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`group relative max-w-xl px-5 py-3 rounded-2xl text-sm leading-relaxed ${
+                                    msg.role === 'user'
+                                        ? 'bg-[#3B5BDB] text-white'
+                                        : 'bg-[#0f1229] border border-[#1e2340] text-gray-200'
+                                }`}>
+                                    {isEditing ? (
+                                        <div className="flex flex-col gap-2 min-w-[280px]">
+                                            <textarea
+                                                ref={messageEditRef}
+                                                value={editingMessageText}
+                                                onChange={e => setEditingMessageText(e.target.value)}
+                                                onKeyDown={e => {
+                                                    if (e.key === 'Escape') cancelMessageEdit()
+                                                }}
+                                                rows={3}
+                                                className="w-full bg-transparent border border-white/30 rounded-lg px-3 py-2 text-white text-sm resize-y outline-none focus:border-white/60"
+                                            />
+                                            <div className="flex gap-2 justify-end">
+                                                <button
+                                                    onClick={cancelMessageEdit}
+                                                    className="text-xs px-3 py-1 rounded-lg border border-white/40 text-white hover:bg-white/10 transition-colors"
+                                                >
+                                                    Annulla
+                                                </button>
+                                                <button
+                                                    onClick={commitMessageEdit}
+                                                    disabled={!editingMessageText.trim()}
+                                                    className="text-xs px-3 py-1 rounded-lg bg-white text-[#3B5BDB] font-medium hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                                >
+                                                    Salva e rigenera
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ) : msg.role === 'assistant' && loading && i === messages.length - 1 && msg.content === '' ? (
+                                        <span className="text-gray-500">Il mentor sta pensando...</span>
+                                    ) : (
+                                        <>
+                                            {msg.content.split('\n\n').map((para, j) => (
+                                                <p key={j} className={j > 0 ? 'mt-3' : ''}>{para}</p>
+                                            ))}
+                                            {canEdit && (
+                                                <button
+                                                    onClick={() => startMessageEdit(i, msg.content)}
+                                                    className="absolute -left-8 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-white text-sm transition-opacity"
+                                                    title="Modifica messaggio"
+                                                >
+                                                    ✏️
+                                                </button>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
                             </div>
-                        </div>
-                    ))}
+                        )
+                    })}
 
                     <div ref={bottomRef} />
                 </div>
@@ -497,7 +688,7 @@ export default function MentorPage() {
                             </button>
                         ) : (
                             <button
-                                onClick={sendMessage}
+                                onClick={() => sendMessage()}
                                 disabled={!input.trim() || !currentChatId || newChatPending}
                                 className="bg-[#3B5BDB] text-white rounded-xl px-6 py-3 font-medium hover:bg-[#5C7CFA] transition-colors disabled:opacity-40"
                             >

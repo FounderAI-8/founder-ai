@@ -9,6 +9,9 @@ const sbHeaders = {
     'Content-Type': 'application/json',
     apikey: SUPABASE_SERVICE_KEY,
     Authorization: `Bearer ${SUPABASE_SERVICE_KEY}`,
+    // Prefer=return=representation: PostgREST restituisce la riga inserita,
+    // così il client riceve id e created_at e può usarli per l'edit successivo.
+    Prefer: 'return=representation',
 }
 
 // POST /api/messages/save — insert a single mentor message.
@@ -63,5 +66,12 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Failed to save message' }, { status: 500 })
     }
 
-    return NextResponse.json({ ok: true })
+    const rows = await res.json()
+    const row = Array.isArray(rows) ? rows[0] : null
+    if (!row?.id || !row?.created_at) {
+        console.error('/api/messages/save: insert ok ma row/id/created_at mancanti', rows)
+        return NextResponse.json({ error: 'Insert returned no row' }, { status: 500 })
+    }
+
+    return NextResponse.json({ id: row.id, created_at: row.created_at })
 }

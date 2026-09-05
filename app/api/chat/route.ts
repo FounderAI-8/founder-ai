@@ -209,21 +209,6 @@ async function loadHistory(chatId: string): Promise<Array<{ role: 'user' | 'assi
     }
 }
 
-async function saveMessage(chatId: string, role: string, content: string) {
-    try {
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/mentor_messages`, {
-            method: 'POST',
-            headers: sbHeaders,
-            body: JSON.stringify({ chat_id: chatId, session_id: chatId, role, content }),
-        })
-        if (!res.ok) {
-            console.error(`saveMessage failed [${res.status}]:`, await res.text())
-        }
-    } catch (e) {
-        console.error('saveMessage error:', e)
-    }
-}
-
 async function loadFounderProfile(userId: string): Promise<{ text: string; track: string | null }> {
     if (!userId) return { text: '', track: null }
     try {
@@ -295,10 +280,10 @@ async function loadFounderProfile(userId: string): Promise<{ text: string; track
 
 export async function POST(req: NextRequest) {
     try {
-        const { message, chatId, userId } = await req.json()
+        const { chatId, userId } = await req.json()
 
-        if (!message || !chatId) {
-            return NextResponse.json({ error: 'Missing message or chatId' }, { status: 400 })
+        if (!chatId) {
+            return NextResponse.json({ error: 'Missing chatId' }, { status: 400 })
         }
 
         const [history, founderProfile] = await Promise.all([
@@ -306,7 +291,16 @@ export async function POST(req: NextRequest) {
             loadFounderProfile(userId),
         ])
 
-        const kbContext = await retrieveSloanContext(message, {
+        // Il messaggio user è stato salvato dal client via /api/messages/save
+        // prima di chiamare questa route (vedi flusso sendMessage in mentor/page.tsx),
+        // quindi è già l'ultimo elemento della history. Se non c'è, qualcosa è andato
+        // storto lato client e non ha senso proseguire.
+        const lastUserMessage = [...history].reverse().find(m => m.role === 'user')?.content
+        if (!lastUserMessage) {
+            return NextResponse.json({ error: 'No user message in history' }, { status: 400 })
+        }
+
+        const kbContext = await retrieveSloanContext(lastUserMessage, {
             matchCount: 6,
             track: founderProfile.track,
         })
@@ -316,14 +310,6 @@ export async function POST(req: NextRequest) {
             : ''
         const systemPrompt = MENTOR_SYSTEM_PROMPT + founderProfile.text + kbBlock
 
-        const messages = [
-            ...history,
-            { role: 'user' as const, content: message },
-        ]
-
-        // Save user message before streaming starts so it's never lost
-        await saveMessage(chatId, 'user', message)
-
         // Avvia la chiamata Anthropic PRIMA di costruire la ReadableStream.
         // Se fallisce qui (credito esaurito, rate limit, rete) possiamo ancora
         // restituire un codice HTTP di errore invece di un 200 con body vuoto.
@@ -332,7 +318,7 @@ export async function POST(req: NextRequest) {
                 model: 'claude-sonnet-4-6',
                 max_tokens: 1024,
                 system: systemPrompt,
-                messages,
+                messages: history,
                 stream: true,
             },
             { signal: req.signal }
