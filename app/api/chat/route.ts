@@ -10,10 +10,26 @@ const SUPABASE_URL = 'https://nkzgisgrbipbnaogeryw.supabase.co'
 // Route server-side: service role key, stesso motivo di app/api/chats/route.ts.
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
+const BUCKET = 'mentor-attachments'
+
 const sbHeaders = {
     'Content-Type': 'application/json',
     apikey: SUPABASE_KEY,
     Authorization: `Bearer ${SUPABASE_KEY}`,
+}
+
+interface StoredAttachment {
+    path: string
+    type: 'image' | 'document'
+    mime: string
+    name: string
+    size: number
+}
+
+interface HistoryMessage {
+    role: 'user' | 'assistant'
+    content: string
+    attachments: StoredAttachment[] | null
 }
 
 // ─── SLOAN — MENTOR SYSTEM PROMPT (Level 1 + 2) ──────────────────────────────
@@ -195,18 +211,99 @@ Sloan opens with: "You're building for restaurants — one of the hardest indust
 
 // ─── SUPABASE HELPERS ─────────────────────────────────────────────────────────
 
-async function loadHistory(chatId: string): Promise<Array<{ role: 'user' | 'assistant'; content: string }>> {
+async function loadHistory(chatId: string): Promise<HistoryMessage[]> {
     try {
         const res = await fetch(
-            `${SUPABASE_URL}/rest/v1/mentor_messages?chat_id=eq.${chatId}&order=created_at.asc&select=role,content`,
+            `${SUPABASE_URL}/rest/v1/mentor_messages?chat_id=eq.${chatId}&order=created_at.asc&select=role,content,attachments`,
             { headers: sbHeaders }
         )
         if (!res.ok) return []
         const rows = await res.json()
-        return rows.map((r: { role: 'user' | 'assistant'; content: string }) => ({ role: r.role, content: r.content }))
+        return rows.map((r: { role: 'user' | 'assistant'; content: string; attachments: StoredAttachment[] | null }) => ({
+            role: r.role,
+            content: r.content,
+            attachments: r.attachments ?? null,
+        }))
     } catch {
         return []
     }
+}
+
+// Scarica un file da Supabase Storage e lo restituisce base64-encoded.
+// Ritorna null se la fetch fallisce — il caller salta l'allegato e prosegue
+// (meglio una risposta parziale che un errore per l'intera generazione).
+async function downloadAttachmentBase64(path: string): Promise<string | null> {
+    try {
+        const url = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURI(path)}`
+        const res = await fetch(url, {
+            headers: { Authorization: `Bearer ${SUPABASE_KEY}` },
+        })
+        if (!res.ok) {
+            console.error(`Attachment download failed [${res.status}] for ${path}`)
+            return null
+        }
+        const buf = Buffer.from(await res.arrayBuffer())
+        return buf.toString('base64')
+    } catch (e) {
+        console.error('Attachment download error:', e)
+        return null
+    }
+}
+
+// Trasforma la history DB in formato Anthropic MessageParam.
+// - Messaggi senza allegati → content stringa (invariato)
+// - Messaggi user con allegati → content diventa array di block:
+//     [image/document base64 blocks..., { type: 'text', text: content }]
+//   (convenzione Anthropic: media block PRIMA del testo per miglior comprensione visiva)
+// Un download fallito viene loggato e l'allegato saltato; l'utente vede
+// comunque una risposta invece che 500.
+async function toAnthropicMessages(history: HistoryMessage[]): Promise<Anthropic.MessageParam[]> {
+    return Promise.all(history.map(async (msg): Promise<Anthropic.MessageParam> => {
+        if (msg.role !== 'user' || !msg.attachments || msg.attachments.length === 0) {
+            return { role: msg.role, content: msg.content }
+        }
+
+        // Download tutti gli allegati in parallelo per questo messaggio
+        const downloads = await Promise.all(
+            msg.attachments.map(async (att) => ({
+                att,
+                base64: await downloadAttachmentBase64(att.path),
+            }))
+        )
+
+        const blocks: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.DocumentBlockParam> = []
+
+        for (const { att, base64 } of downloads) {
+            if (!base64) continue
+            if (att.type === 'image') {
+                blocks.push({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        // MIME già validato in create-upload/save contro whitelist
+                        media_type: att.mime as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp',
+                        data: base64,
+                    },
+                })
+            } else if (att.type === 'document') {
+                blocks.push({
+                    type: 'document',
+                    source: {
+                        type: 'base64',
+                        media_type: 'application/pdf',
+                        data: base64,
+                    },
+                })
+            }
+        }
+
+        // Testo dopo i media (convenzione Anthropic per vision)
+        if (msg.content) {
+            blocks.push({ type: 'text', text: msg.content })
+        }
+
+        return { role: 'user', content: blocks }
+    }))
 }
 
 async function loadFounderProfile(userId: string): Promise<{ text: string; track: string | null }> {
@@ -310,6 +407,12 @@ export async function POST(req: NextRequest) {
             : ''
         const systemPrompt = MENTOR_SYSTEM_PROMPT + founderProfile.text + kbBlock
 
+        // Trasforma la history in formato Anthropic: scarica gli allegati da
+        // Supabase Storage e li embedda come base64 nei ContentBlockParam.
+        // Fatto server-side così i file non transitano mai dal client alla
+        // request Anthropic (privacy + niente signed URL nel payload).
+        const anthropicMessages = await toAnthropicMessages(history)
+
         // Avvia la chiamata Anthropic PRIMA di costruire la ReadableStream.
         // Se fallisce qui (credito esaurito, rate limit, rete) possiamo ancora
         // restituire un codice HTTP di errore invece di un 200 con body vuoto.
@@ -318,7 +421,7 @@ export async function POST(req: NextRequest) {
                 model: 'claude-sonnet-4-6',
                 max_tokens: 1024,
                 system: systemPrompt,
-                messages: history,
+                messages: anthropicMessages,
                 stream: true,
             },
             { signal: req.signal }

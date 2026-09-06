@@ -5,6 +5,27 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
+// Limiti allegati — client-side. Il server (/api/attachments/create-upload,
+// /api/messages/save) ha gli stessi limiti come defense in depth; il bucket
+// Supabase enforce ulteriormente via file_size_limit + allowed_mime_types.
+const MAX_ATTACHMENTS_PER_MESSAGE = 3
+const IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const
+const DOC_MIMES = ['application/pdf'] as const
+const ACCEPT_MIMES = [...IMAGE_MIMES, ...DOC_MIMES].join(',')
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024   // 10 MB
+const MAX_DOC_BYTES = 20 * 1024 * 1024     // 20 MB
+
+interface Attachment {
+    path: string
+    type: 'image' | 'document'
+    mime: string
+    name: string
+    size: number
+    // url: signed URL da history (TTL 1h) o blob: URL locale per anteprima
+    // finché non arriva un fresh reload. Assente = non renderizzabile.
+    url?: string | null
+}
+
 interface Message {
     role: 'user' | 'assistant'
     content: string
@@ -12,6 +33,7 @@ interface Message {
     // Assenti significa: messaggio non ancora persistito → non editabile.
     id?: string
     created_at?: string
+    attachments?: Attachment[]
 }
 
 interface Chat {
@@ -42,6 +64,12 @@ export default function MentorPage() {
     const [editingMessageIndex, setEditingMessageIndex] = useState<number | null>(null)
     const [editingMessageText, setEditingMessageText] = useState('')
     const messageEditRef = useRef<HTMLTextAreaElement>(null)
+
+    // Allegati in composer (pre-invio). url = blob: URL per anteprima locale.
+    const [pendingAttachments, setPendingAttachments] = useState<Attachment[]>([])
+    const [attachmentError, setAttachmentError] = useState<string | null>(null)
+    const [uploadingAttachment, setUploadingAttachment] = useState(false)
+    const fileInputRef = useRef<HTMLInputElement>(null)
 
     const [abortController, setAbortController] = useState<AbortController | null>(null)
     const [newChatPending, setNewChatPending] = useState(false)
@@ -112,7 +140,13 @@ export default function MentorPage() {
         titleUpdatedRef.current = false
         setMessages([])
 
-        const res = await fetch(`/api/history?chatId=${chatId}`)
+        // /api/history ora richiede JWT (aggiunto in PR3 insieme agli signed URL)
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return
+
+        const res = await fetch(`/api/history?chatId=${chatId}`, {
+            headers: { Authorization: `Bearer ${session.access_token}` },
+        })
         if (!res.ok) return
         const rows = await res.json()
         if (Array.isArray(rows) && rows.length > 0) {
@@ -121,11 +155,13 @@ export default function MentorPage() {
                 role: 'user' | 'assistant'
                 content: string
                 created_at: string
+                attachments: Attachment[] | null
             }) => ({
                 id: r.id,
                 role: r.role,
                 content: r.content,
                 created_at: r.created_at,
+                attachments: Array.isArray(r.attachments) ? r.attachments : undefined,
             })))
             titleUpdatedRef.current = true
         }
@@ -156,7 +192,9 @@ export default function MentorPage() {
     // ── send message ──────────────────────────────────────────────────────────
 
     // textArg: usato dal flusso di edit-and-regenerate (bypassa lo state input)
-    const sendMessage = async (textArg?: string) => {
+    // attachmentsArg: usato dall'edit per preservare gli allegati originali del
+    // messaggio in modifica (bypassa pendingAttachments dello state composer).
+    const sendMessage = async (textArg?: string, attachmentsArg?: Attachment[]) => {
         if (loading || newChatPending || !currentChatIdRef.current) return
         const text = (textArg ?? input).trim()
         if (!text) return
@@ -172,17 +210,29 @@ export default function MentorPage() {
         // finire nella chat originale del send.
         const chatIdAtSend = currentChatIdRef.current
 
-        // Optimistic UI: user bubble + empty assistant bubble
+        // Attachments: dall'edit (attachmentsArg) o dal composer (pendingAttachments)
+        const attachmentsToSend: Attachment[] = attachmentsArg ?? pendingAttachments
+
+        // Optimistic UI: user bubble (con attachments se presenti) + empty assistant
         setMessages(prev => [
             ...prev,
-            { role: 'user', content: text },
+            {
+                role: 'user',
+                content: text,
+                ...(attachmentsToSend.length > 0 ? { attachments: attachmentsToSend } : {}),
+            },
             { role: 'assistant', content: '' },
         ])
 
         // Salvataggio user PRIMA di chiamare /api/chat: se fallisce, rollback delle
         // due bubble ottimistiche, ripristino dell'input, e errore visibile in chat
         // (mai un messaggio "fantasma" in UI senza corrispondente in DB).
-        const userSaved = await saveMessageToDb(chatIdAtSend, 'user', text)
+        const userSaved = await saveMessageToDb(
+            chatIdAtSend,
+            'user',
+            text,
+            attachmentsToSend.length > 0 ? attachmentsToSend : undefined,
+        )
         if (!userSaved) {
             setMessages(prev => {
                 const copy = prev.slice(0, -2)
@@ -193,9 +243,17 @@ export default function MentorPage() {
                 return copy
             })
             if (!textArg) setInput(text)
+            // pendingAttachments NON viene svuotato — l'utente ritenta col composer intatto.
             setLoading(false)
             setAbortController(null)
             return
+        }
+
+        // Save ok: se era un fresh send (non edit), svuota il composer.
+        // Non revochiamo i blob URL: sono ancora referenziati dalla bubble
+        // ottimistica in messages state, moriranno all'unload della pagina.
+        if (!attachmentsArg && pendingAttachments.length > 0) {
+            setPendingAttachments([])
         }
 
         // Aggiorna la user bubble (penultima) con id/created_at reali
@@ -335,9 +393,17 @@ export default function MentorPage() {
         chatId: string,
         role: 'user' | 'assistant',
         content: string,
+        attachments?: Attachment[],
     ): Promise<{ id: string; created_at: string } | null> => {
         const { data: { session } } = await supabase.auth.getSession()
         if (!session?.access_token) return null
+
+        // Strippa `url` prima di inviare al server: la colonna DB memorizza
+        // solo path/type/mime/name/size (gli URL sono ephemeral, firmati on-demand).
+        const attachmentsForServer = attachments && attachments.length > 0
+            ? attachments.map(({ path, type, mime, name, size }) => ({ path, type, mime, name, size }))
+            : undefined
+
         try {
             const res = await fetch('/api/messages/save', {
                 method: 'POST',
@@ -345,7 +411,12 @@ export default function MentorPage() {
                     'Content-Type': 'application/json',
                     Authorization: `Bearer ${session.access_token}`,
                 },
-                body: JSON.stringify({ chatId, role, content }),
+                body: JSON.stringify({
+                    chatId,
+                    role,
+                    content,
+                    ...(attachmentsForServer ? { attachments: attachmentsForServer } : {}),
+                }),
             })
             if (!res.ok) return null
             const data = await res.json()
@@ -356,6 +427,110 @@ export default function MentorPage() {
         } catch {
             return null
         }
+    }
+
+    // ── attachments (client-driven upload flow) ───────────────────────────────
+    // Flow: file picker → validazione client → POST /api/attachments/create-upload
+    // (auth + ownership + validazione server) → upload diretto a Supabase Storage
+    // con uploadToSignedUrl (bypassa il body limit 4.5MB delle Vercel functions).
+
+    const uploadAttachment = async (chatId: string, file: File): Promise<Attachment | null> => {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return null
+        try {
+            const createRes = await fetch('/api/attachments/create-upload', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${session.access_token}`,
+                },
+                body: JSON.stringify({
+                    chatId,
+                    filename: file.name,
+                    mime: file.type,
+                    size: file.size,
+                }),
+            })
+            if (!createRes.ok) return null
+            const { path, token } = await createRes.json()
+            if (typeof path !== 'string' || typeof token !== 'string') return null
+
+            const { error } = await supabase.storage
+                .from('mentor-attachments')
+                .uploadToSignedUrl(path, token, file, { contentType: file.type })
+            if (error) return null
+
+            const isImage = (IMAGE_MIMES as readonly string[]).includes(file.type)
+            return {
+                path,
+                type: isImage ? 'image' : 'document',
+                mime: file.type,
+                name: file.name,
+                size: file.size,
+                // blob: URL per anteprima locale in composer e nella bubble
+                // finché non arriva un fresh reload della history.
+                url: URL.createObjectURL(file),
+            }
+        } catch {
+            return null
+        }
+    }
+
+    const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(e.target.files ?? [])
+        // Reset input value così l'utente può ri-selezionare lo stesso file
+        e.target.value = ''
+        if (files.length === 0) return
+        setAttachmentError(null)
+
+        // Client-side validation prima di uploadare qualsiasi cosa
+        if (pendingAttachments.length + files.length > MAX_ATTACHMENTS_PER_MESSAGE) {
+            setAttachmentError(`Massimo ${MAX_ATTACHMENTS_PER_MESSAGE} allegati per messaggio.`)
+            return
+        }
+        for (const file of files) {
+            const isImage = (IMAGE_MIMES as readonly string[]).includes(file.type)
+            const isDoc = (DOC_MIMES as readonly string[]).includes(file.type)
+            if (!isImage && !isDoc) {
+                setAttachmentError(`Formato non supportato: ${file.name}. Consentiti: JPG, PNG, GIF, WEBP, PDF.`)
+                return
+            }
+            const max = isImage ? MAX_IMAGE_BYTES : MAX_DOC_BYTES
+            if (file.size > max) {
+                const limitMB = isImage ? 10 : 20
+                setAttachmentError(`${file.name} è troppo grande (max ${limitMB} MB).`)
+                return
+            }
+        }
+
+        if (!currentChatIdRef.current) {
+            setAttachmentError('Nessuna chat attiva.')
+            return
+        }
+        const chatIdAtUpload = currentChatIdRef.current
+
+        setUploadingAttachment(true)
+        try {
+            for (const file of files) {
+                const uploaded = await uploadAttachment(chatIdAtUpload, file)
+                if (!uploaded) {
+                    setAttachmentError(`Errore nell'upload di ${file.name}. Riprova.`)
+                    return
+                }
+                setPendingAttachments(prev => [...prev, uploaded])
+            }
+        } finally {
+            setUploadingAttachment(false)
+        }
+    }
+
+    const removePendingAttachment = (index: number) => {
+        setPendingAttachments(prev => {
+            const removed = prev[index]
+            if (removed?.url?.startsWith('blob:')) URL.revokeObjectURL(removed.url)
+            return prev.filter((_, i) => i !== index)
+        })
+        setAttachmentError(null)
     }
 
     // ── toggle pin ────────────────────────────────────────────────────────────
@@ -459,14 +634,19 @@ export default function MentorPage() {
             return
         }
 
+        // Snapshot degli allegati originali del messaggio in edit prima di
+        // rimuoverlo dallo state — vanno preservati nel messaggio rigenerato
+        // (l'utente ha modificato solo il testo, gli allegati restano gli stessi).
+        const originalAttachments = msg.attachments
+
         // Rimuovi dal state locale il messaggio in edit + tutti i successivi;
-        // sendMessage(newText) re-inserirà il messaggio user modificato e
-        // rigenererà la risposta assistant.
+        // sendMessage(newText, originalAttachments) re-inserirà il messaggio
+        // user modificato con gli stessi allegati e rigenererà la risposta.
         setMessages(prev => prev.slice(0, editIndex))
         setEditingMessageIndex(null)
         setEditingMessageText('')
 
-        sendMessage(newText)
+        sendMessage(newText, originalAttachments)
     }
 
     // ── render ────────────────────────────────────────────────────────────────
@@ -647,6 +827,38 @@ export default function MentorPage() {
                                         <span className="text-gray-500">Il mentor sta pensando...</span>
                                     ) : (
                                         <>
+                                            {msg.attachments && msg.attachments.length > 0 && (
+                                                <div className="flex flex-wrap gap-2 mb-2">
+                                                    {msg.attachments.map((att, ai) => (
+                                                        att.type === 'image' && att.url ? (
+                                                            <a
+                                                                key={ai}
+                                                                href={att.url}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                            >
+                                                                <img
+                                                                    src={att.url}
+                                                                    alt={att.name}
+                                                                    className="max-h-40 max-w-[240px] rounded-lg border border-white/20 object-cover hover:opacity-90 transition-opacity"
+                                                                />
+                                                            </a>
+                                                        ) : (
+                                                            <a
+                                                                key={ai}
+                                                                href={att.url ?? '#'}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 border border-white/20 text-xs hover:bg-white/20 max-w-[240px] transition-colors"
+                                                                title={att.name}
+                                                            >
+                                                                <span>📄</span>
+                                                                <span className="truncate">{att.name}</span>
+                                                            </a>
+                                                        )
+                                                    ))}
+                                                </div>
+                                            )}
                                             {msg.content.split('\n\n').map((para, j) => (
                                                 <p key={j} className={j > 0 ? 'mt-3' : ''}>{para}</p>
                                             ))}
@@ -670,7 +882,57 @@ export default function MentorPage() {
                 </div>
 
                 <div className="border-t border-[#1e2340] px-8 py-4 max-w-3xl mx-auto w-full">
+                    {pendingAttachments.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-3">
+                            {pendingAttachments.map((att, i) => (
+                                <div key={i} className="relative">
+                                    {att.type === 'image' && att.url ? (
+                                        <img
+                                            src={att.url}
+                                            alt={att.name}
+                                            className="h-16 w-16 rounded-lg object-cover border border-[#1e2340]"
+                                        />
+                                    ) : (
+                                        <div className="h-16 min-w-[120px] max-w-[220px] rounded-lg bg-[#0f1229] border border-[#1e2340] px-3 flex items-center gap-2 text-xs text-gray-300">
+                                            <span>📄</span>
+                                            <span className="truncate">{att.name}</span>
+                                        </div>
+                                    )}
+                                    <button
+                                        onClick={() => removePendingAttachment(i)}
+                                        className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-600 text-white text-xs flex items-center justify-center hover:bg-red-500"
+                                        title="Rimuovi allegato"
+                                    >
+                                        ×
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {attachmentError && (
+                        <div className="text-red-400 text-xs mb-2">{attachmentError}</div>
+                    )}
                     <div className="flex gap-3">
+                        <button
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={loading || uploadingAttachment || pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+                            className="flex-shrink-0 bg-[#0f1229] border border-[#1e2340] text-gray-400 hover:text-white rounded-xl px-4 py-3 text-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            title={
+                                pendingAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE
+                                    ? `Massimo ${MAX_ATTACHMENTS_PER_MESSAGE} allegati per messaggio`
+                                    : uploadingAttachment ? 'Upload in corso…' : 'Allega file'
+                            }
+                        >
+                            {uploadingAttachment ? '⏳' : '📎'}
+                        </button>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            multiple
+                            accept={ACCEPT_MIMES}
+                            onChange={handleFileSelect}
+                            className="hidden"
+                        />
                         <input
                             type="text"
                             value={input}
@@ -689,7 +951,7 @@ export default function MentorPage() {
                         ) : (
                             <button
                                 onClick={() => sendMessage()}
-                                disabled={!input.trim() || !currentChatId || newChatPending}
+                                disabled={!input.trim() || !currentChatId || newChatPending || uploadingAttachment}
                                 className="bg-[#3B5BDB] text-white rounded-xl px-6 py-3 font-medium hover:bg-[#5C7CFA] transition-colors disabled:opacity-40"
                             >
                                 →

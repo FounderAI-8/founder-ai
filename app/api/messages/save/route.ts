@@ -14,12 +14,50 @@ const sbHeaders = {
     Prefer: 'return=representation',
 }
 
+const MAX_ATTACHMENTS = 3
+
+// Valida la struttura degli allegati e verifica che i path appartengano
+// realmente a user/chat corrente (i path sono generati server-side in
+// /api/attachments/create-upload con prefisso {user_id}/{chat_id}/ — un
+// client malevolo non deve poter "attaccare" file di altre chat/utenti).
+function validateAttachments(
+    attachments: unknown,
+    userId: string,
+    chatId: string,
+): string | null {
+    if (!Array.isArray(attachments)) return 'attachments must be an array'
+    if (attachments.length > MAX_ATTACHMENTS) {
+        return `Max ${MAX_ATTACHMENTS} attachments per message`
+    }
+    const expectedPrefix = `${userId}/${chatId}/`
+    for (const a of attachments) {
+        if (!a || typeof a !== 'object') return 'Invalid attachment shape'
+        const att = a as Record<string, unknown>
+        if (typeof att.path !== 'string' || !att.path.startsWith(expectedPrefix)) {
+            return 'Attachment path invalid or does not belong to user/chat'
+        }
+        if (att.type !== 'image' && att.type !== 'document') {
+            return 'Attachment type must be image or document'
+        }
+        if (
+            typeof att.mime !== 'string' ||
+            typeof att.name !== 'string' ||
+            typeof att.size !== 'number'
+        ) {
+            return 'Attachment fields (mime/name/size) invalid'
+        }
+    }
+    return null
+}
+
 // POST /api/messages/save — insert a single mentor message.
 // Il client chiama questo endpoint dopo lo streaming (sia in caso di completamento
 // che di abort con testo parziale). Sposta il salvataggio del messaggio assistant
 // dal server al client per rendere l'abort deterministico: se l'utente interrompe
 // prima che qualsiasi token arrivi, il client non chiama questo endpoint e nulla
 // viene persistito.
+// Il body accetta anche attachments opzionali (array di { path, type, mime, name, size }):
+// se presenti, vengono salvati nella colonna jsonb `attachments`.
 export async function POST(req: NextRequest) {
     // Auth: JWT nell'Authorization header, verificato lato server.
     // Stesso pattern di /api/social/disconnect (localStorage session, non cookie).
@@ -34,7 +72,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { chatId, role, content } = await req.json()
+    const { chatId, role, content, attachments } = await req.json()
 
     if (!chatId || !role || !content) {
         return NextResponse.json({ error: 'Missing chatId, role, or content' }, { status: 400 })
@@ -42,6 +80,15 @@ export async function POST(req: NextRequest) {
 
     if (role !== 'user' && role !== 'assistant') {
         return NextResponse.json({ error: 'Invalid role' }, { status: 400 })
+    }
+
+    // Attachments opzionali. Se presenti (non null/undefined), devono essere un
+    // array valido con path che matchano il prefisso user/chat.
+    if (attachments !== undefined && attachments !== null) {
+        const err = validateAttachments(attachments, user.id, chatId)
+        if (err) {
+            return NextResponse.json({ error: err }, { status: 400 })
+        }
     }
 
     // Ownership check: la chat deve appartenere all'utente autenticato.
@@ -57,7 +104,17 @@ export async function POST(req: NextRequest) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/mentor_messages`, {
         method: 'POST',
         headers: sbHeaders,
-        body: JSON.stringify({ chat_id: chatId, session_id: chatId, role, content }),
+        body: JSON.stringify({
+            chat_id: chatId,
+            session_id: chatId,
+            role,
+            content,
+            // null (non array vuoto) quando non ci sono allegati, coerente con
+            // le righe pre-migrazione (attachments IS NULL).
+            attachments: Array.isArray(attachments) && attachments.length > 0
+                ? attachments
+                : null,
+        }),
     })
 
     if (!res.ok) {
