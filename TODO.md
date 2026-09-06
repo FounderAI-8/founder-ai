@@ -147,6 +147,11 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
 - [x] Autenticazione Supabase
 - [x] Interfaccia chat AI
 - [x] Deploy Vercel
+- [x] Chat Sloan — PR1: streaming risposte + bottone Interrompi
+- [x] Chat Sloan — PR2: modifica messaggio utente con eliminazione successivi e rigenerazione
+- [x] Chat Sloan — PR3: allega file (immagini + PDF), max 3 per messaggio, base64 verso 
+      Anthropic — commit fadadd0, fix successivo 642d009, verificata end-to-end in produzione 
+      il 06/09/2026
 
 ## 9. Note tecniche / gotcha
 
@@ -154,6 +159,11 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
 - Su Supabase, la colonna `id` deve essere `GENERATED ALWAYS AS IDENTITY`, non `NOT NULL` senza auto-increment — altrimenti errore 400 in inserimento.
 - Se lo schema Supabase non si aggiorna dopo modifiche via SQL: `NOTIFY pgrst, 'reload schema';`
 - La landing page è un HTML statico in `public/`, montato via iframe in `app/page.tsx`. Se modifichi il form lì dentro, verifica che ogni `<script>` sia chiuso correttamente (bug già capitato che rompeva `handleSubmit`).
+- Chiamate a Supabase Storage lato server: usare il client SDK con service role 
+  (`storageClient.storage.from(bucket).download/upload(...)`) oppure gli header completi già 
+  definiti in `app/api/chat/route.ts` come `sbHeaders` (apikey + Authorization). MAI header 
+  ad hoc con solo `Authorization`: producono 400 su bucket privati (bug PR3 sfuggito fino ai 
+  log Vercel, fix commit 642d009).
 
 ## Sicurezza — da fare prima di un lancio più ampio della beta chiusa
 
@@ -187,10 +197,22 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       oggi c'è solo il testo "Generazione…" sul bottone
 - [ ] Sloan consiglia i connettori disponibili in base al tipo/settore dell'azienda del founder — 
       estensione naturale di quanto già fa nella dashboard
+- [ ] Allineare i limiti dimensione allegati chat Sloan al limite reale dell'API Anthropic. 
+      Oggi (app/mentor/page.tsx righe 15-16): client blocca a 10 MB per immagini e 20 MB per 
+      PDF, con messaggi di errore già distinti per tipo; bucket Supabase a 20 MB per tutto. 
+      Target: 5 MB immagini (limite API Anthropic per singola immagine — superarlo produce 
+      errore lato API dopo che il file è già stato caricato) e 10 MB PDF. File: 
+      app/mentor/page.tsx (le due costanti MAX_IMAGE_BYTES e MAX_DOC_BYTES), migration per il 
+      bucket se si decide di abbassare anche quello.
+- [ ] Avviso in UI quando un allegato non viene letto dal server nella chat Sloan: oggi il 
+      fallback in downloadAttachmentBase64 (app/api/chat/route.ts) ritorna null e il messaggio 
+      prosegue in solo testo — comportamento corretto per non far fallire l'intera generazione, 
+      ma completamente silenzioso per l'utente. Target: propagare al client l'informazione che 
+      N allegati non sono stati letti e mostrarlo nella chat, così il founder sa che la risposta 
+      ignora il file. Contesto: senza questo avviso, un bug di download è rimasto invisibile 
+      fino a quando non abbiamo letto i log di Vercel.
 
 ### Gruppo 2 — Ben definiti, impegno medio
-- [ ] Feature standard da chatbot in Sloan: interrompere la generazione di un messaggio, 
-      modificare un messaggio già inviato, allegare file alla chat
 - [ ] Risposte a scelta multipla per Sloan quando serve chiarire qualcosa prima di rispondere 
       (pattern "bottoni cliccabili" invece di solo testo libero)
 - [ ] Generatore copertine per YouTube (verificare se estendibile a cover TikTok/Instagram) — 
