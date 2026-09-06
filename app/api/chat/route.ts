@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 import { retrieveSloanContext } from '@/lib/sloan-retrieval'
 
 const client = new Anthropic({
@@ -11,6 +12,13 @@ const SUPABASE_URL = 'https://nkzgisgrbipbnaogeryw.supabase.co'
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const BUCKET = 'mentor-attachments'
+
+// Client istanziato a livello modulo (una sola volta per cold start).
+// persistSession/autoRefreshToken=false: in serverless non c'è nessuna sessione
+// da persistere e il refresh automatico creerebbe timer inutili.
+const storageClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+})
 
 const sbHeaders = {
     'Content-Type': 'application/json',
@@ -230,22 +238,21 @@ async function loadHistory(chatId: string): Promise<HistoryMessage[]> {
 }
 
 // Scarica un file da Supabase Storage e lo restituisce base64-encoded.
-// Ritorna null se la fetch fallisce — il caller salta l'allegato e prosegue
+// Ritorna null se il download fallisce — il caller salta l'allegato e prosegue
 // (meglio una risposta parziale che un errore per l'intera generazione).
+// Usa l'SDK invece di raw fetch: la costruzione manuale dell'URL + header
+// parziali (solo Authorization, senza apikey) causava 400 in produzione.
 async function downloadAttachmentBase64(path: string): Promise<string | null> {
     try {
-        const url = `${SUPABASE_URL}/storage/v1/object/${BUCKET}/${encodeURI(path)}`
-        const res = await fetch(url, {
-            headers: { Authorization: `Bearer ${SUPABASE_KEY}` },
-        })
-        if (!res.ok) {
-            console.error(`Attachment download failed [${res.status}] for ${path}`)
+        const { data, error } = await storageClient.storage.from(BUCKET).download(path)
+        if (error || !data) {
+            console.error(`Attachment download failed for ${path}:`, error?.message ?? 'no data returned')
             return null
         }
-        const buf = Buffer.from(await res.arrayBuffer())
+        const buf = Buffer.from(await data.arrayBuffer())
         return buf.toString('base64')
     } catch (e) {
-        console.error('Attachment download error:', e)
+        console.error(`Attachment download error for ${path}:`, e)
         return null
     }
 }
