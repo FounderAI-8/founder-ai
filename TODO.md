@@ -232,6 +232,20 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       lancio a utenti reali). La demo key regge 50 req/ora, sufficiente in sviluppo ma non 
       con utenti veri; il fallimento sarebbe silenzioso lato utente (immagini mancanti o 
       generico "riprova più tardi" senza spiegazione della causa).
+- [ ] Eliminare il vecchio progetto Vercel `founderai-app` — residuo di un setup 
+      precedente, il progetto attivo è `founder-ai-iota`. Vercel dashboard → progetto 
+      `founderai-app` → Settings → Advanced → Delete project. Prima verificare che nessun 
+      dominio attivo punti ancora lì. Richiede accesso manuale alla dashboard, non 
+      automatizzabile.
+- [ ] Avatar Sloan accanto ai suoi messaggi nella chat mentor — iniziale "S" o placeholder 
+      neutro in attesa del design definitivo. Oggi le bubble assistant sono senza avatar, 
+      il founder distingue user/Sloan solo dal colore/allineamento della bubble.
+- [ ] Pulizia asset logo in `public/`. Oggi ci sono due file: 
+      `Founder_AI_logo_transparent.png` (orfano, nessun riferimento nel codice) e 
+      `Fouderailogobianco_transparent.png` (usato dalla navbar mentor, ma con un typo nel 
+      nome — manca la "n" di "Founder"). Da decidere: eliminare l'orfano oppure usarlo al 
+      posto dell'altro, e rinominare il file usato correggendo il typo aggiornando i 
+      riferimenti nel codice (`app/mentor/page.tsx` almeno).
 
 ### Gruppo 2 — Ben definiti, impegno medio
 - [ ] Risposte a scelta multipla per Sloan quando serve chiarire qualcosa prima di rispondere 
@@ -248,6 +262,10 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       con poca esperienza tecnica (soprattutto PMI/primo business), ma utile per tutti. 
       Probabilmente richiede web_search abilitato anche nella chat normale con Sloan (oggi 
       attivo solo per Calendario & Trend), non solo la KB statica.
+- [ ] Form di feedback in-app (max 3 domande), mostrato dopo la quinta conversazione con 
+      Sloan. Collegato al gate di Fase 1 (lancio a utenti reali, vedi Sez. 6): serve per 
+      raccogliere feedback strutturato dai primi test user senza intervista sincrona, prima 
+      di espandere la beta.
 
 ### Gruppo 3 — Da chiarire/investigare prima di implementare
 - [ ] Editor Design: migliorare lo snapping — oggi "trabalza" invece di agganciarsi con 
