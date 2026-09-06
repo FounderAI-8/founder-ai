@@ -37,6 +37,7 @@
 5. Non pushare su main senza revisione umana. Fine sessione = branch pronto per PR, non merge automatico.
 6. A fine sessione, aggiorna questo file: sposta i task completati in "Fatto" (Sez. 8), aggiungi eventuali nuovi task emersi, annota blocchi in "Decisioni da prendere" (Sez. 7).
 7. Se il task è grande (>1 giorno di lavoro stimato), spezzalo in sotto-task verificabili singolarmente prima di iniziare.
+8. **Verifica live end-to-end su founder-ai-iota.vercel.app dopo ogni task che tocca il deploy.** Il test di codice (punto 3) verifica correttezza logica; la verifica live conferma che la feature funzioni sul deploy reale con dati reali. Sono due cose diverse — nessuna delle due sostituisce l'altra: un task senza verifica live non è "done" se altera comportamento visibile in produzione. Quando la verifica live viene delegata a un agente esterno (browser automation, ecc.), dirgli **esplicitamente cosa è cambiato dall'ultima esecuzione** — altrimenti le sue conclusioni sulle cause degli errori osservati sono inaffidabili anche se i test sono eseguiti correttamente (rischio: attribuire un errore ancora presente a codice già modificato, o considerare fixato qualcosa che è ancora rotto).
 
 ## 4. Stato attuale (riassunto)
 
@@ -164,9 +165,22 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
   definiti in `app/api/chat/route.ts` come `sbHeaders` (apikey + Authorization). MAI header 
   ad hoc con solo `Authorization`: producono 400 su bucket privati (bug PR3 sfuggito fino ai 
   log Vercel, fix commit 642d009).
+- Snapping editor Fabric.js: la patch attuale accede a `_currentTransform.offsetX`, che è 
+  API privata non documentata di Fabric. Prima di ogni upgrade della libreria, verificare 
+  che il campo esista ancora e si comporti come atteso — può cambiare o sparire senza 
+  preavviso tra versioni minor.
+- Cowork Write/Edit: bug di troncatura su file oltre ~14 KB — il contenuto scritto viene 
+  tagliato senza avviso. Per file grandi, splittare le modifiche in più Edit puntuali 
+  oppure verificare esplicitamente la lunghezza del file dopo la scrittura.
 
 ## Sicurezza — da fare prima di un lancio più ampio della beta chiusa
 
+- [ ] **Audit auth sistematico su tutte le route in `app/api/`**: passata completa route per 
+      route per verificare presenza di auth JWT + ownership check, producendo una lista 
+      delle route scoperte da fixare. Motivazione: `/api/history` è rimasto pubblico per 
+      mesi ed è stato scoperto per caso durante PR3 (aggiungendo signed URL degli allegati 
+      sarebbe diventato un leak) — le tre voci specifiche qui sotto sono probabilmente un 
+      sottoinsieme del problema, non il problema completo.
 - [ ] `/api/social/connect` si fida di `userId` passato nel body della richiesta senza 
       verificarlo contro la sessione autenticata lato server. Un client malevolo potrebbe 
       passare lo `userId` di un altro founder, creando un profilo Zernio o collegando account 
@@ -211,6 +225,13 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       N allegati non sono stati letti e mostrarlo nella chat, così il founder sa che la risposta 
       ignora il file. Contesto: senza questo avviso, un bug di download è rimasto invisibile 
       fino a quando non abbiamo letto i log di Vercel.
+- [ ] Rimuovere `@netlify/plugin-nextjs` da package.json — residuo di una configurazione 
+      Netlify mai usata, il progetto è deployato su Vercel. Verificare che rimuoverlo non 
+      rompa il build (npm run build in locale) prima di committare.
+- [ ] **Unsplash — passare da demo key a production key** (prerequisito del gate Fase 1, 
+      lancio a utenti reali). La demo key regge 50 req/ora, sufficiente in sviluppo ma non 
+      con utenti veri; il fallimento sarebbe silenzioso lato utente (immagini mancanti o 
+      generico "riprova più tardi" senza spiegazione della causa).
 
 ### Gruppo 2 — Ben definiti, impegno medio
 - [ ] Risposte a scelta multipla per Sloan quando serve chiarire qualcosa prima di rispondere 
