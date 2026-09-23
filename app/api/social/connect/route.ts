@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://nkzgisgrbipbnaogeryw.supabase.co'
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const ZERNIO_API = 'https://zernio.com/api/v1'
 const ZERNIO_KEY = process.env.ZERNIO_API_KEY!
@@ -18,13 +20,32 @@ const zHeaders = {
 }
 
 export async function POST(req: NextRequest) {
+  const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+  if (!token) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  const { data: { user } } = await supabase.auth.getUser(token)
+  if (!user) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  let platform: string
   try {
-    const { platform, userId } = await req.json()
+    const body = await req.json()
+    platform = body?.platform
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+  }
 
-    if (!platform || !userId) {
-      return NextResponse.json({ error: 'Missing platform or userId' }, { status: 400 })
-    }
+  if (!platform) {
+    return NextResponse.json({ error: 'Missing platform' }, { status: 400 })
+  }
 
+  const userId = user.id
+
+  try {
     // Look up existing zernio_profile_id for this user
     const profileRes = await fetch(
       `${SUPABASE_URL}/rest/v1/founder_profiles?user_id=eq.${userId}&select=zernio_profile_id`,
