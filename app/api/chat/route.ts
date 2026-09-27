@@ -10,6 +10,7 @@ const client = new Anthropic({
 const SUPABASE_URL = 'https://nkzgisgrbipbnaogeryw.supabase.co'
 // Route server-side: service role key, stesso motivo di app/api/chats/route.ts.
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 
 const BUCKET = 'mentor-attachments'
 
@@ -380,19 +381,59 @@ async function loadFounderProfile(userId: string): Promise<{ text: string; track
     }
 }
 
+// ─── AUTH HELPERS ────────────────────────────────────────────────────────────
+
+async function authenticate(req: NextRequest) {
+    const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+    if (!token) return null
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    const { data: { user } } = await supabase.auth.getUser(token)
+    return user ?? null
+}
+
+async function verifyChatOwnership(chatId: string, userId: string): Promise<boolean> {
+    try {
+        const res = await fetch(
+            `${SUPABASE_URL}/rest/v1/chats?id=eq.${chatId}&user_id=eq.${userId}&select=id`,
+            { headers: sbHeaders }
+        )
+        if (!res.ok) return false
+        const rows = await res.json()
+        return Array.isArray(rows) && rows.length > 0
+    } catch {
+        return false
+    }
+}
+
 // ─── MAIN ROUTE ───────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
+    const user = await authenticate(req)
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    let chatId: string
     try {
-        const { chatId, userId } = await req.json()
+        const body = await req.json()
+        chatId = body?.chatId
+    } catch {
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+    }
 
-        if (!chatId) {
-            return NextResponse.json({ error: 'Missing chatId' }, { status: 400 })
-        }
+    if (!chatId) {
+        return NextResponse.json({ error: 'Missing chatId' }, { status: 400 })
+    }
 
+    const owned = await verifyChatOwnership(chatId, user.id)
+    if (!owned) {
+        return NextResponse.json({ error: 'Not found or forbidden' }, { status: 403 })
+    }
+
+    try {
         const [history, founderProfile] = await Promise.all([
             loadHistory(chatId),
-            loadFounderProfile(userId),
+            loadFounderProfile(user.id),
         ])
 
         // Il messaggio user è stato salvato dal client via /api/messages/save

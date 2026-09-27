@@ -269,16 +269,16 @@ export default function MentorPage() {
             return copy
         })
 
+        const { data: { session } } = await supabase.auth.getSession()
         let assistantText = ''
 
         try {
             const response = await fetch('/api/chat', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token ?? ''}` },
                 signal: controller.signal,
                 body: JSON.stringify({
                     chatId: chatIdAtSend,
-                    userId: userIdRef.current,
                 }),
             })
 
