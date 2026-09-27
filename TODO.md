@@ -190,10 +190,19 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
       sempre da `user.id` (mai da body/query); `req.json()` in try/catch con 400 su body
       malformato. Per `/api/chats` e `/api/chat` aggiunto anche ownership check sul `chatId`
       prima di operare (`&user_id=eq.${user.id}` nel filtro Supabase / `verifyChatOwnership()`).
-- [ ] **`/api/social/callback`** — caso dubbio, non fixato. La route ricava `userId` dal DB
-      tramite il `profileId` restituito da Zernio invece che da un token firmato. Il rischio
-      dipende dalla sicurezza lato Zernio: se è possibile un `profileId` manipolato o un open
-      redirect, la callback potrebbe essere dirottata. Da valutare se serve un CSRF state check.
+- [ ] **`/api/social/callback`** — analisi completata il 27/09/2026. **Rischio basso, non
+      bloccante.** Nessun fix implementato: il costo di ristrutturare il flusso con un
+      meccanismo CSRF state/nonce eccede il beneficio dato il danno massimo stimato.
+      Vettori analizzati:
+      - Chiamata diretta alla callback con `profileId` vittima: praticabilità bassa
+        (`zernio_profile_id` non esposto in UI — nota: compare nei log Vercel, già considerato,
+        non cambia la conclusione); danno = re-scrive connessione vittima con i suoi stessi
+        dati → zero.
+      - Forging del flusso Zernio con `profileId` vittima: richiede `ZERNIO_API_KEY` (secret
+        server-side, non esposta al client); danno = connessione social vittima sovrascritta
+        con account attaccante.
+      - Bug interno Zernio (profileId scambiati): fuori dal nostro controllo; danno = solo
+        Social Manager impattato, nessuna compromissione di credenziali o messaggi.
 - [ ] **Route `/api/social/generate-copy`, `generate-image`, `suggest-image-description`** —
       usano la service role key per leggere il profilo utente, pur operando sempre e solo su
       `user.id` dell'autenticato (nessun rischio di accesso a dati altrui). Service role non
