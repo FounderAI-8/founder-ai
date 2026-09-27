@@ -165,6 +165,11 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
   definiti in `app/api/chat/route.ts` come `sbHeaders` (apikey + Authorization). MAI header 
   ad hoc con solo `Authorization`: producono 400 su bucket privati (bug PR3 sfuggito fino ai 
   log Vercel, fix commit 642d009).
+- Autenticazione JWT nelle route API: validare sempre il token con
+  `createClient(SUPABASE_URL, SUPABASE_ANON_KEY)` + `supabase.auth.getUser(token)`. MAI
+  usare la service role key per verificare l'identità dell'utente — la service role bypassa
+  ogni controllo e non valida il JWT. Pattern applicato sistematicamente su
+  `/api/social/connect` (0a9279f), `/api/chats` (68bf4c0), `/api/chat` (c18469f).
 - Snapping editor Fabric.js: la patch attuale accede a `_currentTransform.offsetX`, che è 
   API privata non documentata di Fabric. Prima di ogni upgrade della libreria, verificare 
   che il campo esista ancora e si comporti come atteso — può cambiare o sparire senza 
@@ -175,22 +180,25 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
 
 ## Sicurezza — da fare prima di un lancio più ampio della beta chiusa
 
-- [ ] **Audit auth sistematico su tutte le route in `app/api/`**: passata completa route per 
-      route per verificare presenza di auth JWT + ownership check, producendo una lista 
-      delle route scoperte da fixare. Motivazione: `/api/history` è rimasto pubblico per 
-      mesi ed è stato scoperto per caso durante PR3 (aggiungendo signed URL degli allegati 
-      sarebbe diventato un leak) — le tre voci specifiche qui sotto sono probabilmente un 
-      sottoinsieme del problema, non il problema completo.
-- [ ] `/api/social/connect` si fida di `userId` passato nel body della richiesta senza 
-      verificarlo contro la sessione autenticata lato server. Un client malevolo potrebbe 
-      passare lo `userId` di un altro founder, creando un profilo Zernio o collegando account 
-      social a suo nome (impatto: costi Zernio non previsti, o account collegati alla persona 
-      sbagliata). Fix: leggere l'utente dalla sessione autenticata (es. supabase.auth.getUser() 
-      lato server) invece che dal body.
-- [ ] `/api/chats` (PATCH) si fida di `chatId` passato dal client senza verificare che 
-      appartenga all'utente che fa la richiesta. Rischio pratico basso (UUID casuali difficili 
-      da indovinare), ma va sistemato prima di aprire il prodotto oltre un gruppo ristretto di 
-      beta tester fidati.
+- [x] **Audit auth sistematico su tutte le route in `app/api/`** — ricognizione completa
+      eseguita (20 route mappate). Tre fix applicati e verificati end-to-end in produzione
+      il 27/09/2026:
+      - `/api/social/connect` — commit 0a9279f
+      - `/api/chats` (GET/POST/PATCH) — commit 68bf4c0
+      - `/api/chat` — commit c18469f
+      Pattern comune: `getUser(token)` con anon key all'inizio di ogni handler; `userId`
+      sempre da `user.id` (mai da body/query); `req.json()` in try/catch con 400 su body
+      malformato. Per `/api/chats` e `/api/chat` aggiunto anche ownership check sul `chatId`
+      prima di operare (`&user_id=eq.${user.id}` nel filtro Supabase / `verifyChatOwnership()`).
+- [ ] **`/api/social/callback`** — caso dubbio, non fixato. La route ricava `userId` dal DB
+      tramite il `profileId` restituito da Zernio invece che da un token firmato. Il rischio
+      dipende dalla sicurezza lato Zernio: se è possibile un `profileId` manipolato o un open
+      redirect, la callback potrebbe essere dirottata. Da valutare se serve un CSRF state check.
+- [ ] **Route `/api/social/generate-copy`, `generate-image`, `suggest-image-description`** —
+      usano la service role key per leggere il profilo utente, pur operando sempre e solo su
+      `user.id` dell'autenticato (nessun rischio di accesso a dati altrui). Service role non
+      strettamente necessaria: si potrebbe usare il client Supabase con JWT dell'utente e RLS,
+      riducendo la superficie d'uso della service role key in caso di bug futuri.
 - [ ] Controllo generale RLS su tutte le tabelle Supabase: `social_connections` è stata creata 
       con RLS abilitata ma senza nessuna policy, causando letture silenziosamente vuote dal 
       browser per giorni prima di essere scoperto (fix applicato: policy SELECT su 
