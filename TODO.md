@@ -170,6 +170,16 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
   usare la service role key per verificare l'identità dell'utente — la service role bypassa
   ogni controllo e non valida il JWT. Pattern applicato sistematicamente su
   `/api/social/connect` (0a9279f), `/api/chats` (68bf4c0), `/api/chat` (c18469f).
+- Verificare sempre `pg_policies`, non solo `rowsecurity`: `rowsecurity = true` significa solo
+  che RLS è attiva sulla tabella — non garantisce che esistano policy corrette. Una tabella con
+  RLS attiva e zero policy blocca tutto per gli utenti non-service-role senza errori espliciti
+  (silent empty results). Query da eseguire su ogni tabella sensibile:
+  ```sql
+  SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = '<nome_tabella>';
+  ```
+  Scoperto il 27/09/2026 su `founder_profiles` (policy `"open"` — USING true) e
+  `mentor_messages` (policy `"allow anon full access"`). Fix applicato in transazione
+  BEGIN/COMMIT per evitare la finestra senza policy durante DROP + CREATE.
 - Snapping editor Fabric.js: la patch attuale accede a `_currentTransform.offsetX`, che è 
   API privata non documentata di Fabric. Prima di ogni upgrade della libreria, verificare 
   che il campo esista ancora e si comporti come atteso — può cambiare o sparire senza 
@@ -203,11 +213,27 @@ Nessuna decisione bloccante al momento — tutte risolte in questa sessione (rat
         con account attaccante.
       - Bug interno Zernio (profileId scambiati): fuori dal nostro controllo; danno = solo
         Social Manager impattato, nessuna compromissione di credenziali o messaggi.
+- [x] **RLS audit su `founder_profiles` e `mentor_messages`** — scoperta il 27/09/2026 durante
+      l'analisi delle route generate-*. Trovate due policy critiche:
+      - `founder_profiles`: policy `"open"` (USING true) — lettura/scrittura senza restrizioni
+        per qualsiasi utente autenticato. Sostituita con 3 policy corrette (SELECT/INSERT/UPDATE
+        su `auth.uid() = user_id`) in transazione BEGIN/COMMIT il 27/09/2026.
+      - `mentor_messages`: policy `"allow anon full access"` — accesso completo senza filtro
+        owner. Tabella senza colonna `user_id`: ownership ricavata tramite EXISTS subquery su
+        `chats.user_id`. Sostituita con policy SELECT corretta in transazione il 27/09/2026.
+      - `social_connections`: già corretta (policy SELECT su `auth.uid() = user_id`). `chats`:
+        già corretta. Nessun fix necessario su queste due.
+      Scoperta tramite `SELECT policyname, cmd, qual FROM pg_policies WHERE tablename = '...'` —
+      `rowsecurity = true` da solo non basta, servono le policy effettive.
+      Verifica post-fix: `/profile` save/reload confermato in locale; curl con anon key restituisce
+      `[]` su `mentor_messages` di un altro utente.
 - [ ] **Route `/api/social/generate-copy`, `generate-image`, `suggest-image-description`** —
       usano la service role key per leggere il profilo utente, pur operando sempre e solo su
       `user.id` dell'autenticato (nessun rischio di accesso a dati altrui). Service role non
       strettamente necessaria: si potrebbe usare il client Supabase con JWT dell'utente e RLS,
       riducendo la superficie d'uso della service role key in caso di bug futuri.
+      **Aggiornamento 27/09/2026**: fix ora più sicuro — `founder_profiles` ha RLS corretta,
+      quindi il client anon+JWT legge solo il profilo dell'utente autenticato senza rischi.
 - [ ] Controllo generale RLS su tutte le tabelle Supabase: `social_connections` è stata creata 
       con RLS abilitata ma senza nessuna policy, causando letture silenziosamente vuote dal 
       browser per giorni prima di essere scoperto (fix applicato: policy SELECT su 
