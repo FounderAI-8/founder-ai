@@ -100,9 +100,12 @@ export default function MentorPage() {
     }, [])
 
     const initChats = async (uid: string) => {
+        const { data: { session } } = await supabase.auth.getSession()
         let list: Chat[] = []
         try {
-            const res = await fetch(`/api/chats?userId=${uid}`)
+            const res = await fetch('/api/chats', {
+                headers: { Authorization: `Bearer ${session?.access_token ?? ''}` },
+            })
             if (res.ok) {
                 const data = await res.json()
                 if (Array.isArray(data)) list = data
@@ -112,7 +115,7 @@ export default function MentorPage() {
         }
 
         if (list.length === 0) {
-            const created = await createChat(uid)
+            const created = await createChat()
             if (created) list = [created]
         }
 
@@ -120,13 +123,13 @@ export default function MentorPage() {
         if (list.length > 0) selectChat(list[0].id)
     }
 
-    const createChat = async (uid?: string): Promise<Chat | null> => {
-        const uidToUse = uid ?? userIdRef.current
-        if (!uidToUse) return null
+    const createChat = async (): Promise<Chat | null> => {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return null
         const res = await fetch('/api/chats', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ userId: uidToUse, title: 'Nuova chat' }),
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ title: 'Nuova chat' }),
         })
         if (!res.ok) return null
         return res.json()
@@ -376,9 +379,11 @@ export default function MentorPage() {
     // ── update title ──────────────────────────────────────────────────────────
 
     const updateChatTitle = async (chatId: string, title: string) => {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return
         const res = await fetch('/api/chats', {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({ chatId, title }),
         })
         if (!res.ok) return
@@ -537,9 +542,11 @@ export default function MentorPage() {
 
     const togglePin = async (e: React.MouseEvent, chat: Chat) => {
         e.stopPropagation()
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) return
         const res = await fetch('/api/chats', {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
             body: JSON.stringify({ chatId: chat.id, pinned: !chat.pinned }),
         })
         if (!res.ok) return

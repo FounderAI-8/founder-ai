@@ -42,9 +42,12 @@ export default function Dashboard() {
       const u = data.user
       setUser(u)
 
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { router.push('/auth/login'); return }
+
       const [profileRes, chatsRes] = await Promise.all([
         supabase.from('founder_profiles').select('stage, idea, track, problem, plan').eq('user_id', u.id).single(),
-        fetch(`/api/chats?userId=${u.id}`)
+        fetch('/api/chats', { headers: { Authorization: `Bearer ${session.access_token}` } })
       ])
 
       if (!profileRes.data) {

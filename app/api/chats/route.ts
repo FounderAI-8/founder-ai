@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://nkzgisgrbipbnaogeryw.supabase.co'
-// Route server-side: usa la service role key (bypassa RLS) perché qui non
-// giunge il JWT dell'utente — con la anon key ogni insert/select su `chats`
-// veniva rifiutato dalla row-level security (42501). La route stessa scopa
-// già le query per userId/chatId passato dal client autenticato.
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 
 const sbHeaders = {
@@ -14,18 +12,25 @@ const sbHeaders = {
     Prefer: 'return=representation',
 }
 
-// GET /api/chats?userId=xxx — list all chats for a user
-// POST /api/chats — create a new chat
-// PATCH /api/chats — update title or pinned status
-export async function GET(req: NextRequest) {
-    const userId = req.nextUrl.searchParams.get('userId')
+async function authenticate(req: NextRequest) {
+    const token = req.headers.get('Authorization')?.replace('Bearer ', '')
+    if (!token) return null
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+    const { data: { user } } = await supabase.auth.getUser(token)
+    return user ?? null
+}
 
-    if (!userId) {
-        return NextResponse.json({ error: 'Missing userId' }, { status: 400 })
+// GET /api/chats — list all chats for the authenticated user
+// POST /api/chats — create a new chat
+// PATCH /api/chats — update title or pinned status (ownership enforced)
+export async function GET(req: NextRequest) {
+    const user = await authenticate(req)
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/chats?user_id=eq.${userId}&order=pinned.desc,created_at.desc&select=id,title,pinned,created_at`,
+        `${SUPABASE_URL}/rest/v1/chats?user_id=eq.${user.id}&order=pinned.desc,created_at.desc&select=id,title,pinned,created_at`,
         { headers: sbHeaders }
     )
 
@@ -38,16 +43,23 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-    const { userId, title } = await req.json()
+    const user = await authenticate(req)
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    if (!userId) {
-        return NextResponse.json({ error: 'Missing userId' }, { status: 400 })
+    let title: string | undefined
+    try {
+        const body = await req.json()
+        title = body?.title
+    } catch {
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
     }
 
     const res = await fetch(`${SUPABASE_URL}/rest/v1/chats`, {
         method: 'POST',
         headers: sbHeaders,
-        body: JSON.stringify({ user_id: userId, title: title ?? 'Nuova chat', pinned: false }),
+        body: JSON.stringify({ user_id: user.id, title: title ?? 'Nuova chat', pinned: false }),
     })
 
     if (!res.ok) {
@@ -60,26 +72,41 @@ export async function POST(req: NextRequest) {
 }
 
 export async function PATCH(req: NextRequest) {
-    const { chatId, title, pinned } = await req.json()
+    const user = await authenticate(req)
+    if (!user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    let chatId: string | undefined
+    let title: unknown
+    let pinned: unknown
+    try {
+        const body = await req.json()
+        chatId = body?.chatId
+        title = body?.title
+        pinned = body?.pinned
+    } catch {
+        return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+    }
 
     if (!chatId) {
         return NextResponse.json({ error: 'Missing chatId' }, { status: 400 })
     }
 
-    const body: Record<string, unknown> = {}
-    if (title !== undefined) body.title = title
-    if (pinned !== undefined) body.pinned = pinned
+    const updateBody: Record<string, unknown> = {}
+    if (title !== undefined) updateBody.title = title
+    if (pinned !== undefined) updateBody.pinned = pinned
 
-    if (Object.keys(body).length === 0) {
+    if (Object.keys(updateBody).length === 0) {
         return NextResponse.json({ error: 'Nothing to update' }, { status: 400 })
     }
 
     const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/chats?id=eq.${chatId}`,
+        `${SUPABASE_URL}/rest/v1/chats?id=eq.${chatId}&user_id=eq.${user.id}`,
         {
             method: 'PATCH',
             headers: sbHeaders,
-            body: JSON.stringify(body),
+            body: JSON.stringify(updateBody),
         }
     )
 
@@ -89,5 +116,8 @@ export async function PATCH(req: NextRequest) {
     }
 
     const rows = await res.json()
+    if (!rows[0]) {
+        return NextResponse.json({ error: 'Not found or forbidden' }, { status: 403 })
+    }
     return NextResponse.json(rows[0])
 }
